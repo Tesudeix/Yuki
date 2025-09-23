@@ -1,4 +1,5 @@
 const express = require("express");
+const mongoose = require("mongoose");
 const router = express.Router();
 const User = require("../models/User");
 const { client: twilioClient, verifyServiceSid, checkVerifyService } = require("../twilio");
@@ -14,6 +15,61 @@ const sanitizePhone = (phone) => {
     const normalized = phone.replace(/\s+/g, "");
     return E164_REGEX.test(normalized) ? normalized : null;
 };
+
+const formatUser = (userDoc) => {
+    if (!userDoc) {
+        return null;
+    }
+
+    const doc = typeof userDoc.toObject === "function" ? userDoc.toObject() : userDoc;
+
+    return {
+        id: doc._id?.toString?.() ?? doc.id ?? null,
+        phone: doc.phone,
+        name: doc.name ?? null,
+        email: doc.email ?? null,
+        role: doc.role ?? null,
+        age: typeof doc.age === "number" ? doc.age : null,
+        lastVerifiedAt: doc.lastVerifiedAt ?? null,
+        createdAt: doc.createdAt ?? null,
+        updatedAt: doc.updatedAt ?? null,
+    };
+};
+
+const mongoStateLabels = {
+    0: "disconnected",
+    1: "connected",
+    2: "connecting",
+    3: "disconnecting",
+};
+
+router.get("/status", async (req, res) => {
+    const connectionState = mongoose.connection.readyState;
+    const mongo = {
+        connected: connectionState === 1,
+        status: mongoStateLabels[connectionState] || "unknown",
+        database: mongoose.connection.name || null,
+    };
+
+    try {
+        const twilioStatus = await checkVerifyService();
+
+        return res.json({
+            success: true,
+            mongo,
+            twilio: twilioStatus.ok
+                ? { ok: true, service: twilioStatus.service, checkedAt: twilioStatus.timestamp }
+                : { ok: false, error: twilioStatus.error, checkedAt: twilioStatus.timestamp },
+        });
+    } catch (err) {
+        return res.status(500).json({
+            success: false,
+            error: "Failed to compute service status",
+            details: err.message,
+            mongo,
+        });
+    }
+});
 
 const authGuard = (req, res, next) => {
     try {
@@ -86,6 +142,13 @@ router.post("/otp/verify", async (req, res) => {
         return res.status(400).json({ error: "Phone number (E.164) and verification code are required" });
     }
 
+    if (mongoose.connection.readyState !== 1) {
+        return res.status(503).json({
+            error: "MongoDB connection unavailable",
+            details: mongoStateLabels[mongoose.connection.readyState] || "unknown",
+        });
+    }
+
     try {
         const status = await checkVerifyService();
 
@@ -104,16 +167,22 @@ router.post("/otp/verify", async (req, res) => {
             return res.status(401).json({ error: "Invalid or expired OTP" });
         }
 
-        let user = await User.findOne({ phone });
-
-        if (!user) {
-            user = new User({ phone });
-            await user.save();
-        }
+        const now = new Date();
+        const user = await User.findOneAndUpdate(
+            { phone },
+            {
+                $set: { lastVerifiedAt: now },
+                $setOnInsert: { phone },
+            },
+            {
+                new: true,
+                upsert: true,
+            },
+        );
 
         const token = createToken({ phone: user.phone, userId: user._id.toString() });
 
-        return res.json({ success: true, token, user });
+        return res.json({ success: true, token, user: formatUser(user) });
     } catch (err) {
         return res.status(500).json({ error: "Failed to verify OTP", details: err.message });
     }
@@ -121,13 +190,20 @@ router.post("/otp/verify", async (req, res) => {
 
 router.get("/profile", authGuard, async (req, res) => {
     try {
-        const user = await User.findOne({ phone: req.user.phone });
+        if (mongoose.connection.readyState !== 1) {
+            return res.status(503).json({
+                error: "MongoDB connection unavailable",
+                details: mongoStateLabels[mongoose.connection.readyState] || "unknown",
+            });
+        }
+
+        const user = await User.findOne({ phone: req.user.phone }).lean();
 
         if (!user) {
             return res.status(404).json({ error: "User not found" });
         }
 
-        return res.json({ success: true, user });
+        return res.json({ success: true, user: formatUser(user) });
     } catch (err) {
         return res.status(500).json({ error: err.message });
     }

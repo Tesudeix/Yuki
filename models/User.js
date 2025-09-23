@@ -5,7 +5,8 @@ const userSchema = new mongoose.Schema({
     email: String,
     phone: { type: String, unique: true, required: true },
     role: String,
-    age: Number
+    age: Number,
+    lastVerifiedAt: Date,
 }, { timestamps: true });
 
 module.exports = mongoose.model("User", userSchema);
