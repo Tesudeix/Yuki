@@ -2,7 +2,7 @@ const mongoose = require("mongoose");
 
 const locationSchema = new mongoose.Schema({
     name: { type: String, required: true, trim: true },
-    slug: { type: String, trim: true, unique: true, sparse: true },
+    slug: { type: String, trim: true },
     city: { type: String, trim: true },
     district: { type: String, trim: true },
     address: { type: String, trim: true },

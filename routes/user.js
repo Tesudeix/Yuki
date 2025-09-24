@@ -81,6 +81,18 @@ const mongoStateLabels = {
     3: "disconnecting",
 };
 
+const sendSuccess = (res, status, payload = {}) => res.status(status).json({ success: true, ...payload });
+const sendError = (res, status, error, extra = {}) => res.status(status).json({ success: false, error, ...extra });
+const ensureMongoConnection = (res) => {
+    const state = mongoose.connection.readyState;
+    if (state !== 1) {
+        return sendError(res, 503, "MongoDB connection unavailable", {
+            details: mongoStateLabels[state] || "unknown",
+        });
+    }
+    return null;
+};
+
 router.get("/status", async (req, res) => {
     const connectionState = mongoose.connection.readyState;
     const mongo = {
@@ -89,23 +101,20 @@ router.get("/status", async (req, res) => {
         database: mongoose.connection.name || null,
     };
 
-    return res.json({
-        success: true,
-        mongo,
-    });
+    return sendSuccess(res, 200, { mongo });
 });
 
 const authGuard = (req, res, next) => {
     try {
         const token = req.headers.authorization?.split(" ")[1];
         if (!token) {
-            return res.status(401).json({ error: "No token provided" });
+            return sendError(res, 401, "No token provided");
         }
 
         req.user = verifyJwt(token);
         return next();
     } catch (err) {
-        return res.status(401).json({ error: "Unauthorized", details: err.message });
+        return sendError(res, 401, "Unauthorized", { details: err.message });
     }
 };
 
@@ -115,25 +124,23 @@ router.post("/register", async (req, res) => {
     const name = typeof req.body.name === "string" ? req.body.name.trim() || undefined : undefined;
 
     if (!phone) {
-        return res.status(400).json({ error: "Phone number must be provided in E.164 format (e.g. +15551234567)" });
+        return sendError(res, 400, "Phone number must be provided in E.164 format (e.g. +15551234567)");
     }
 
-    if (mongoose.connection.readyState !== 1) {
-        return res.status(503).json({
-            error: "MongoDB connection unavailable",
-            details: mongoStateLabels[mongoose.connection.readyState] || "unknown",
-        });
+    const mongoGuard = ensureMongoConnection(res);
+    if (mongoGuard) {
+        return mongoGuard;
     }
 
     const validation = validatePassword(passwordInput);
     if (!validation.ok) {
-        return res.status(400).json({ error: validation.error });
+        return sendError(res, 400, validation.error);
     }
 
     try {
         const existing = await User.findOne({ phone }).select("_id");
         if (existing) {
-            return res.status(409).json({ error: "This phone number is already registered" });
+            return sendError(res, 409, "This phone number is already registered");
         }
 
         const now = new Date();
@@ -150,9 +157,9 @@ router.post("/register", async (req, res) => {
 
         const token = createToken({ phone: user.phone, userId: user._id.toString() });
 
-        return res.status(201).json({ success: true, token, user: formatUser(user) });
+        return sendSuccess(res, 201, { token, user: formatUser(user) });
     } catch (err) {
-        return res.status(500).json({ error: "Failed to register", details: err.message });
+        return sendError(res, 500, "Failed to register", { details: err.message });
     }
 });
 
@@ -161,27 +168,25 @@ router.post("/login", async (req, res) => {
     const passwordInput = normalizePassword(req.body.password);
 
     if (!phone || !passwordInput) {
-        return res.status(400).json({ error: "Phone number (E.164) and password are required" });
+        return sendError(res, 400, "Phone number (E.164) and password are required");
     }
 
-    if (mongoose.connection.readyState !== 1) {
-        return res.status(503).json({
-            error: "MongoDB connection unavailable",
-            details: mongoStateLabels[mongoose.connection.readyState] || "unknown",
-        });
+    const mongoGuard = ensureMongoConnection(res);
+    if (mongoGuard) {
+        return mongoGuard;
     }
 
     try {
         const user = await User.findOne({ phone }).select("+passwordHash");
 
         if (!user || !user.passwordHash) {
-            return res.status(401).json({ error: "Invalid phone number or password" });
+            return sendError(res, 401, "Invalid phone number or password");
         }
 
         const passwordMatches = await bcrypt.compare(passwordInput, user.passwordHash);
 
         if (!passwordMatches) {
-            return res.status(401).json({ error: "Invalid phone number or password" });
+            return sendError(res, 401, "Invalid phone number or password");
         }
 
         user.lastLoginAt = new Date();
@@ -190,41 +195,39 @@ router.post("/login", async (req, res) => {
 
         const token = createToken({ phone: user.phone, userId: user._id.toString() });
 
-        return res.json({ success: true, token, user: formatUser(user) });
+        return sendSuccess(res, 200, { token, user: formatUser(user) });
     } catch (err) {
-        return res.status(500).json({ error: "Failed to sign in", details: err.message });
+        return sendError(res, 500, "Failed to sign in", { details: err.message });
     }
 });
 
 router.post("/password/change", authGuard, async (req, res) => {
-    if (mongoose.connection.readyState !== 1) {
-        return res.status(503).json({
-            error: "MongoDB connection unavailable",
-            details: mongoStateLabels[mongoose.connection.readyState] || "unknown",
-        });
+    const mongoGuard = ensureMongoConnection(res);
+    if (mongoGuard) {
+        return mongoGuard;
     }
 
     const currentPassword = normalizePassword(req.body.currentPassword);
     const newPassword = normalizePassword(req.body.newPassword);
 
     if (!currentPassword || !newPassword) {
-        return res.status(400).json({ error: "Both currentPassword and newPassword are required" });
+        return sendError(res, 400, "Both currentPassword and newPassword are required");
     }
 
     const validation = validatePassword(newPassword);
     if (!validation.ok) {
-        return res.status(400).json({ error: validation.error });
+        return sendError(res, 400, validation.error);
     }
 
     try {
         const user = await User.findById(req.user.userId).select("+passwordHash");
         if (!user || !user.passwordHash) {
-            return res.status(404).json({ error: "User not found" });
+            return sendError(res, 404, "User not found");
         }
 
         const matches = await bcrypt.compare(currentPassword, user.passwordHash);
         if (!matches) {
-            return res.status(401).json({ error: "Current password is incorrect" });
+            return sendError(res, 401, "Current password is incorrect");
         }
 
         user.passwordHash = await bcrypt.hash(newPassword, BCRYPT_ROUNDS);
@@ -232,30 +235,28 @@ router.post("/password/change", authGuard, async (req, res) => {
         user.lastPasswordResetAt = new Date();
         await user.save();
 
-        return res.json({ success: true });
+        return sendSuccess(res, 200, {});
     } catch (err) {
-        return res.status(500).json({ error: "Failed to change password", details: err.message });
+        return sendError(res, 500, "Failed to change password", { details: err.message });
     }
 });
 
 router.get("/profile", authGuard, async (req, res) => {
-    try {
-        if (mongoose.connection.readyState !== 1) {
-            return res.status(503).json({
-                error: "MongoDB connection unavailable",
-                details: mongoStateLabels[mongoose.connection.readyState] || "unknown",
-            });
-        }
+    const mongoGuard = ensureMongoConnection(res);
+    if (mongoGuard) {
+        return mongoGuard;
+    }
 
+    try {
         const user = await User.findOne({ phone: req.user.phone }).lean();
 
         if (!user) {
-            return res.status(404).json({ error: "User not found" });
+            return sendError(res, 404, "User not found");
         }
 
-        return res.json({ success: true, user: formatUser(user) });
+        return sendSuccess(res, 200, { user: formatUser(user) });
     } catch (err) {
-        return res.status(500).json({ error: err.message });
+        return sendError(res, 500, "Failed to load profile", { details: err.message });
     }
 });
 

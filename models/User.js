@@ -3,7 +3,7 @@ const mongoose = require("mongoose");
 const userSchema = new mongoose.Schema({
     name: String,
     email: String,
-    phone: { type: String, unique: true, required: true },
+    phone: { type: String, required: true, trim: true },
     role: String,
     age: Number,
     passwordHash: { type: String, select: false },
@@ -12,5 +12,7 @@ const userSchema = new mongoose.Schema({
     lastLoginAt: Date,
     lastPasswordResetAt: Date,
 }, { timestamps: true });
+
+userSchema.index({ phone: 1 }, { unique: true });
 
 module.exports = mongoose.model("User", userSchema);

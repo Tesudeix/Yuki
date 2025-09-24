@@ -8,12 +8,9 @@ const User = require("../models/User");
 const Location = require("../models/Location");
 const Artist = require("../models/Artist");
 const Booking = require("../models/Booking");
+const { ensureAdminUser, normalizeAdminPhone } = require("../services/admin-setup");
 
 const router = express.Router();
-
-const ADMIN_PHONE = "+97699113769";
-const ADMIN_PASSWORD = "admin123";
-const BCRYPT_ROUNDS = 10;
 
 const isValidObjectId = (value) => mongoose.Types.ObjectId.isValid(value);
 
@@ -24,87 +21,6 @@ const slugify = (value) =>
         .toLowerCase()
         .replace(/[^a-z0-9]+/g, "-")
         .replace(/(^-|-$)+/g, "");
-
-let ensureAdminPromise = null;
-
-const normalizeAdminPhone = (value) => {
-    if (typeof value !== "string") {
-        return "";
-    }
-
-    const trimmed = value.trim();
-    if (!trimmed) {
-        return "";
-    }
-
-    const digits = trimmed.replace(/[^\d+]/g, "");
-    if (!digits) {
-        return "";
-    }
-
-    if (digits.startsWith("+")) {
-        return `+${digits.slice(1).replace(/\D/g, "")}`;
-    }
-
-    return `+${digits.replace(/\D/g, "")}`;
-};
-
-const ensureAdminUser = async () => {
-    if (ensureAdminPromise) {
-        return ensureAdminPromise;
-    }
-
-    ensureAdminPromise = (async () => {
-        const normalizedPhone = normalizeAdminPhone(ADMIN_PHONE);
-
-        let admin = await AdminUser.findOne({ phone: normalizedPhone });
-
-        const syncUserCredentials = async (passwordHash) => {
-            await User.findOneAndUpdate(
-                { phone: normalizedPhone },
-                {
-                    phone: normalizedPhone,
-                    passwordHash,
-                    hasPassword: true,
-                    name: "Админ хэрэглэгч",
-                },
-                { upsert: true, new: true, setDefaultsOnInsert: true },
-            );
-        };
-
-        if (!admin) {
-            const passwordHash = await bcrypt.hash(ADMIN_PASSWORD, BCRYPT_ROUNDS);
-            admin = await AdminUser.create({
-                phone: normalizedPhone,
-                passwordHash,
-                name: "Админ",
-            });
-
-            await syncUserCredentials(passwordHash);
-            return admin;
-        }
-
-        const passwordMatches = await bcrypt.compare(ADMIN_PASSWORD, admin.passwordHash);
-        if (!passwordMatches) {
-            const passwordHash = await bcrypt.hash(ADMIN_PASSWORD, BCRYPT_ROUNDS);
-            admin.passwordHash = passwordHash;
-            await admin.save();
-            await syncUserCredentials(passwordHash);
-        } else {
-            await syncUserCredentials(admin.passwordHash);
-        }
-
-        return admin;
-    })()
-        .catch((error) => {
-            console.error("Failed to ensure admin user", error);
-        })
-        .finally(() => {
-            ensureAdminPromise = null;
-        });
-
-    return ensureAdminPromise;
-};
 
 const requireAdminAuth = async (req, res, next) => {
     try {
@@ -449,7 +365,5 @@ router.get("/analytics/artists", async (req, res) => {
         return res.status(500).json({ success: false, error: "Статистик ачаалахад алдаа гарлаа.", details: err.message });
     }
 });
-
-ensureAdminUser().catch(() => undefined);
 
 module.exports = router;

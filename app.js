@@ -18,17 +18,33 @@ app.use("/users", userRoutes);
 app.use("/booking", bookingRoutes);
 app.use("/admin", adminRoutes);
 
-// MongoDB connection
-mongoose.connect(process.env.MONGO_URI)
-    .then(() => console.log("✅ MongoDB connected"))
-    .catch(err => console.error("❌ MongoDB connection error:", err));
-
 // Test route
 app.get("/", (req, res) => {
     res.json({ message: "🚀 Yuki backend is running with Twilio Verify!" });
 });
 
-const PORT = process.env.PORT || 4000;
-app.listen(PORT, () => {
-    console.log(`🚀 Server running on port ${PORT}`);
-});
+const PORT = Number.parseInt(process.env.PORT ?? "4000", 10);
+
+const { ensureAdminUser } = require("./services/admin-setup");
+
+const bootstrap = async () => {
+    const mongoUri = process.env.MONGO_URI;
+    if (!mongoUri) {
+        console.error("❌ MONGO_URI is not configured.");
+        process.exit(1);
+    }
+
+    try {
+        await mongoose.connect(mongoUri);
+        console.log("✅ MongoDB connected");
+        await ensureAdminUser();
+        app.listen(PORT, () => {
+            console.log(`🚀 Server running on port ${PORT}`);
+        });
+    } catch (err) {
+        console.error("❌ Failed to start server", err);
+        process.exit(1);
+    }
+};
+
+bootstrap();
