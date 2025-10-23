@@ -35,7 +35,13 @@ const storage = multer.diskStorage({
         cb(null, safe);
     },
 });
-const upload = multer({ storage });
+const upload = multer({
+    storage,
+    limits: {
+        // Cap file size to 200MB to mitigate abuse
+        fileSize: 200 * 1024 * 1024,
+    },
+});
 
 // Routes
 app.use("/users", userRoutes);
@@ -61,6 +67,16 @@ app.post("/upload", upload.single("file"), (req, res) => {
 // Test route
 app.get("/", (req, res) => {
     res.json({ message: "🚀 Yuki backend is running with Twilio Verify!" });
+});
+
+// Centralized error handler (catches Multer and other middleware errors)
+// Ensures malformed multipart requests don't crash the process
+// eslint-disable-next-line no-unused-vars
+app.use((err, req, res, next) => {
+    if (err && err instanceof multer.MulterError) {
+        return res.status(400).json({ success: false, error: "Upload error", code: err.code });
+    }
+    return res.status(500).json({ success: false, error: "Server error", details: err?.message });
 });
 
 const PORT = Number.parseInt(process.env.PORT ?? "4000", 10);
