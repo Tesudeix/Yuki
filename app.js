@@ -27,16 +27,33 @@ fs.mkdirSync(uploadDir, { recursive: true });
 // Static file serving at /files/* for anything under public/uploads
 app.use("/files", express.static(uploadDir));
 
+// Helpers for safe, unique filenames
+const sanitizeName = (input) =>
+    String(input || "")
+        .replace(/\s+/g, "-")
+        .replace(/[^a-zA-Z0-9._-]/g, "")
+        .replace(/-+/g, "-")
+        .replace(/^[-_.]+|[-_.]+$/g, "");
+
+const makeUniqueFilename = (originalName) => {
+    const base = path.basename(originalName || "file");
+    const extOrig = path.extname(base);
+    const nameOrig = base.slice(0, base.length - extOrig.length);
+
+    const nameSafe = sanitizeName(nameOrig) || "file";
+    const extSafe = sanitizeName(extOrig.replace(/^\./, ""));
+    const extPart = extSafe ? `.${extSafe}` : "";
+
+    const ts = Date.now().toString(36);
+    const rand = Math.random().toString(36).slice(2, 8);
+    return `${nameSafe}-${ts}-${rand}${extPart}`;
+};
+
 // Configure Multer storage
 const storage = multer.diskStorage({
     destination: (req, file, cb) => cb(null, uploadDir),
     filename: (req, file, cb) => {
-        const base = path.basename(file.originalname);
-        const safe = base
-            .replace(/\s+/g, "-")
-            .replace(/[^a-zA-Z0-9._-]/g, "")
-            .replace(/-+/g, "-") || "file";
-        cb(null, safe);
+        cb(null, makeUniqueFilename(file.originalname));
     },
 });
 const upload = multer({
