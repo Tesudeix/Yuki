@@ -1,6 +1,9 @@
 const express = require("express");
 const mongoose = require("mongoose");
 const cors = require("cors");
+const multer = require("multer");
+const path = require("path");
+const fs = require("fs");
 require("dotenv").config();
 
 const userRoutes = require("./routes/user");
@@ -13,10 +16,47 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
+// Ensure public/uploads directory exists for serving files
+const uploadDir = path.join(__dirname, "public", "uploads");
+fs.mkdirSync(uploadDir, { recursive: true });
+
+// Static file serving at /files/* for anything under public/uploads
+app.use("/files", express.static(uploadDir));
+
+// Configure Multer storage
+const storage = multer.diskStorage({
+    destination: (req, file, cb) => cb(null, uploadDir),
+    filename: (req, file, cb) => {
+        const base = path.basename(file.originalname);
+        const safe = base
+            .replace(/\s+/g, "-")
+            .replace(/[^a-zA-Z0-9._-]/g, "")
+            .replace(/-+/g, "-") || "file";
+        cb(null, safe);
+    },
+});
+const upload = multer({ storage });
+
 // Routes
 app.use("/users", userRoutes);
 app.use("/booking", bookingRoutes);
 app.use("/admin", adminRoutes);
+
+// Open upload endpoint (multipart/form-data)
+app.post("/upload", upload.single("file"), (req, res) => {
+    try {
+        if (!req.file) {
+            return res.status(400).json({ success: false, error: "No file uploaded" });
+        }
+        const filename = req.file.filename;
+        const host = req.get("host");
+        const protocol = req.protocol;
+        const downloadUrl = `${protocol}://${host}/files/${encodeURIComponent(filename)}`;
+        return res.status(201).json({ success: true, downloadUrl });
+    } catch (err) {
+        return res.status(500).json({ success: false, error: "Upload failed", details: err?.message });
+    }
+});
 
 // Test route
 app.get("/", (req, res) => {
