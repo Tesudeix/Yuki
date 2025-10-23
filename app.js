@@ -16,8 +16,9 @@ app.set("trust proxy", true);
 
 // Middleware
 app.use(cors());
-// Explicitly allow preflight for safety in varied proxy setups
-app.options("*", cors());
+// Explicitly allow preflight for safety in varied proxy setups (Express 5 + path-to-regexp v6)
+// Use a RegExp instead of '*' which is no longer supported
+app.options(/.*/, cors());
 app.use(express.json());
 
 // Ensure public/uploads directory exists for serving files
@@ -70,23 +71,35 @@ app.use("/booking", bookingRoutes);
 app.use("/admin", adminRoutes);
 
 // Open upload endpoint (multipart/form-data)
+// In Yuki/app.js
 app.post("/upload", upload.single("file"), (req, res) => {
     try {
         if (!req.file) {
             return res.status(400).json({ success: false, error: "No file uploaded" });
         }
         const filename = req.file.filename;
-        // Prefer a configured public base URL if provided
-        const publicBase = (process.env.PUBLIC_BASE_URL || "").replace(/\/$/, "");
-        const host = req.get("host");
-        const protocol = req.protocol;
-        const base = publicBase || `${protocol}://${host}`;
+        // Validate PUBLIC_BASE_URL; if invalid, use current request host
+        let base = "";
+        const rawBase = process.env.PUBLIC_BASE_URL || "";
+        try {
+            // Will throw if rawBase isn’t a valid absolute URL
+            const urlObj = new URL(rawBase);
+            base = `${urlObj.protocol}//${urlObj.host}`;
+        } catch (e) {
+            base = `${req.protocol}://${req.get("host")}`;
+        }
+        // Always return a full URL for the API and a relative path for the UI
         const downloadUrl = `${base}/files/${encodeURIComponent(filename)}`;
         return res.status(201).json({ success: true, downloadUrl });
     } catch (err) {
-        return res.status(500).json({ success: false, error: "Upload failed", details: err?.message });
+        return res.status(500).json({
+            success: false,
+            error: "Upload failed",
+            details: err?.message,
+        });
     }
 });
+
 
 // Test route
 app.get("/", (req, res) => {
