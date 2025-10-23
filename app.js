@@ -11,9 +11,13 @@ const bookingRoutes = require("./routes/booking");
 const adminRoutes = require("./routes/admin");
 
 const app = express();
+// When behind reverse proxies (Nginx/Cloudflare), trust the forwarded headers
+app.set("trust proxy", true);
 
 // Middleware
 app.use(cors());
+// Explicitly allow preflight for safety in varied proxy setups
+app.options("*", cors());
 app.use(express.json());
 
 // Ensure public/uploads directory exists for serving files
@@ -55,9 +59,12 @@ app.post("/upload", upload.single("file"), (req, res) => {
             return res.status(400).json({ success: false, error: "No file uploaded" });
         }
         const filename = req.file.filename;
+        // Prefer a configured public base URL if provided
+        const publicBase = (process.env.PUBLIC_BASE_URL || "").replace(/\/$/, "");
         const host = req.get("host");
         const protocol = req.protocol;
-        const downloadUrl = `${protocol}://${host}/files/${encodeURIComponent(filename)}`;
+        const base = publicBase || `${protocol}://${host}`;
+        const downloadUrl = `${base}/files/${encodeURIComponent(filename)}`;
         return res.status(201).json({ success: true, downloadUrl });
     } catch (err) {
         return res.status(500).json({ success: false, error: "Upload failed", details: err?.message });
