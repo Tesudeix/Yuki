@@ -5,10 +5,14 @@ const multer = require("multer");
 const path = require("path");
 const fs = require("fs");
 require("dotenv").config();
+// Node 18+ provides global fetch/FormData/Blob via undici
+const { removeBackgroundWithRemoveBg, removeBackgroundWithNanoBanana } = require("./services/background-remove");
+const { optimizeCodeWithOpenAI } = require("./services/code-optimizer");
 
 const userRoutes = require("./routes/user");
 const bookingRoutes = require("./routes/booking");
 const adminRoutes = require("./routes/admin");
+const postRoutes = require("./routes/posts");
 
 const app = express();
 // When behind reverse proxies (Nginx/Cloudflare), trust the forwarded headers
@@ -69,6 +73,7 @@ const upload = multer({
 app.use("/users", userRoutes);
 app.use("/booking", bookingRoutes);
 app.use("/admin", adminRoutes);
+app.use("/api/posts", postRoutes);
 
 // Open upload endpoint (multipart/form-data)
 // In Yuki/app.js
@@ -100,6 +105,134 @@ app.post("/upload", upload.single("file"), (req, res) => {
     }
 });
 
+// Background removal endpoint (multipart/form-data; field name: "image")
+app.post("/image/remove-background", upload.single("image"), async (req, res) => {
+    try {
+        console.log("[remove-bg] incoming", { provider: req.body?.provider, hasFile: !!req.file, name: req.file?.originalname });
+        if (!req.file) {
+            return res.status(400).json({ success: false, error: "No image uploaded" });
+        }
+
+        const rawKeyBody = (req.body && (req.body.apiKey || req.body.key || req.body.token)) || "";
+        const rawKeyHeader = req.get("x-api-key") || req.get("authorization") || "";
+        const apiKeyFromBody = String(rawKeyBody).replace(/^Bearer\s+/i, "").trim();
+        const apiKeyFromHeader = String(rawKeyHeader).replace(/^Bearer\s+/i, "").trim();
+        const apiKey = apiKeyFromBody || apiKeyFromHeader || process.env.NANO_BANANA_API_KEY || process.env.REMOVE_BG_API_KEY
+            || process.env.BG_REMOVE_API_KEY
+            || process.env.REMOVER_API_KEY
+            || process.env.NANO_BANANO_API_KEY
+            || process.env.NANO_BANANO_API
+            || process.env.BACKGROUND_API_KEY;
+
+        if (!apiKey) {
+            console.warn("[remove-bg] missing API key");
+            return res.status(500).json({ success: false, error: "Background API key is not configured" });
+        }
+
+        const srcPath = path.join(uploadDir, req.file.filename);
+        const outName = req.file.filename.replace(/(\.[a-zA-Z0-9]+)?$/, (m) => m ? `-nobg${m}` : "-nobg.png");
+        const outPath = path.join(uploadDir, outName);
+
+        // Provider selection defaults to Nano Banana (OpenAI disabled)
+        const provider = (req.body && req.body.provider) || "nanobanana";
+        let result;
+        if (provider === "removebg") {
+            result = await removeBackgroundWithRemoveBg(srcPath, apiKey);
+        } else if (provider === "nanobanana" || provider === "nano-banana" || provider === "nano") {
+            const nbUrl = (req.body && (req.body.nbUrl || req.body.endpoint)) || process.env.NANO_BANANA_ENDPOINT || process.env.NANO_BANANA_API_URL;
+            const product = (req.body && (req.body.product || req.body.subject)) || "kettle";
+            const defaultPrompt = `Extract product A professional e-commerce product photograph of [${product}] displayed using the ghost mannequin technique. The outfit is perfectly centered, high-resolution, and isolated against a pure white, seamless studio background (#FFFFFF). The image features bright, even lighting, sharp, clean edges, and no human model or body parts. Format: 1:1 square aspect ratio.`;
+            result = await removeBackgroundWithNanoBanana(srcPath, apiKey, nbUrl, defaultPrompt);
+        } else if (provider === "openai") {
+            return res.status(403).json({ success: false, error: "OpenAI provider is disabled. Use provider=nanobanana and supply Nano Banana API settings." });
+        } else {
+            // Placeholder for alternative provider integration
+            return res.status(501).json({ success: false, error: `Provider '${provider}' is not supported yet.` });
+        }
+        if (!result.success) {
+            console.warn("[remove-bg] provider error", result.error);
+            return res.status(502).json({ success: false, error: result.error || "Background removal failed" });
+        }
+
+        await fs.promises.writeFile(outPath, result.buffer);
+
+        let base = "";
+        const rawBase = process.env.PUBLIC_BASE_URL || "";
+        try {
+            const urlObj = new URL(rawBase);
+            base = `${urlObj.protocol}//${urlObj.host}`;
+        } catch (e) {
+            base = `${req.protocol}://${req.get("host")}`;
+        }
+
+        const downloadUrl = `${base}/files/${encodeURIComponent(outName)}`;
+        console.log("[remove-bg] success", downloadUrl);
+        return res.status(200).json({ success: true, downloadUrl, file: `/files/${encodeURIComponent(outName)}` });
+    } catch (err) {
+        console.error("[remove-bg] unhandled error", err);
+        return res.status(500).json({ success: false, error: err?.message || "Server error" });
+    }
+});
+
+// Dedicated extract-product agent, defaults to Nano Banana and white background prompt
+// POST /ai/extract-product (multipart/form-data) fields: image, product?, apiKey?, nbUrl?
+app.post("/ai/extract-product", upload.single("image"), async (req, res) => {
+    try {
+        if (!req.file) {
+            return res.status(400).json({ success: false, error: "No image uploaded" });
+        }
+        const rawKeyBody = (req.body && (req.body.apiKey || req.body.key || req.body.token)) || "";
+        const rawKeyHeader = req.get("x-api-key") || req.get("authorization") || "";
+        const apiKeyFromBody = String(rawKeyBody).replace(/^Bearer\s+/i, "").trim();
+        const apiKeyFromHeader = String(rawKeyHeader).replace(/^Bearer\s+/i, "").trim();
+        const apiKey = apiKeyFromBody || apiKeyFromHeader || process.env.NANO_BANANA_API_KEY || "";
+        if (!apiKey) {
+            return res.status(500).json({ success: false, error: "Nano Banana API key is not configured" });
+        }
+        const srcPath = path.join(uploadDir, req.file.filename);
+        const outName = req.file.filename.replace(/(\.[a-zA-Z0-9]+)?$/, (m) => m ? `-product${m}` : "-product.png");
+        const outPath = path.join(uploadDir, outName);
+
+        const product = (req.body && (req.body.product || req.body.subject)) || "kettle";
+        const defaultPrompt = `Extract product A professional e-commerce product photograph of [${product}] displayed using the ghost mannequin technique. The outfit is perfectly centered, high-resolution, and isolated against a pure white, seamless studio background (#FFFFFF). The image features bright, even lighting, sharp, clean edges, and no human model or body parts. Format: 1:1 square aspect ratio.`;
+        const nbUrl = (req.body && (req.body.nbUrl || req.body.endpoint)) || process.env.NANO_BANANA_ENDPOINT || process.env.NANO_BANANA_API_URL;
+        const result = await removeBackgroundWithNanoBanana(srcPath, apiKey, nbUrl, defaultPrompt);
+        if (!result.success) {
+            return res.status(502).json({ success: false, error: result.error || "Extraction failed" });
+        }
+        await fs.promises.writeFile(outPath, result.buffer);
+        let base = "";
+        const rawBase = process.env.PUBLIC_BASE_URL || "";
+        try { const u = new URL(rawBase); base = `${u.protocol}//${u.host}`; } catch { base = `${req.protocol}://${req.get("host")}`; }
+        const downloadUrl = `${base}/files/${encodeURIComponent(outName)}`;
+        return res.json({ success: true, downloadUrl, file: `/files/${encodeURIComponent(outName)}` });
+    } catch (err) {
+        return res.status(500).json({ success: false, error: err?.message || "Server error" });
+    }
+});
+
+// Code optimizer agent (JSON)
+// POST /ai/optimize-code
+// Body: { code: string, language?: string, goals?: string, apiKey?: string, model?: string }
+app.post("/ai/optimize-code", async (req, res) => {
+    try {
+        const { code, language, goals, model } = req.body || {};
+        const rawKeyBody = (req.body && (req.body.apiKey || req.body.key || req.body.token)) || "";
+        const rawKeyHeader = req.get("x-api-key") || req.get("authorization") || "";
+        const apiKeyFromBody = String(rawKeyBody).replace(/^Bearer\s+/i, "").trim();
+        const apiKeyFromHeader = String(rawKeyHeader).replace(/^Bearer\s+/i, "").trim();
+        const apiKey = apiKeyFromBody || apiKeyFromHeader || process.env.OPENAI_API_KEY || "";
+
+        const result = await optimizeCodeWithOpenAI({ apiKey, code, language, goals, model });
+        if (!result.success) {
+            return res.status(400).json(result);
+        }
+        return res.json(result);
+    } catch (err) {
+        return res.status(500).json({ success: false, error: err?.message || "Server error" });
+    }
+});
+
 
 // Test route
 app.get("/", (req, res) => {
@@ -122,22 +255,22 @@ const { ensureAdminUser } = require("./services/admin-setup");
 
 const bootstrap = async () => {
     const mongoUri = process.env.MONGO_URI;
+    let dbReady = false;
     if (!mongoUri) {
-        console.error("❌ MONGO_URI is not configured.");
-        process.exit(1);
+        console.warn("⚠️  MONGO_URI not set. Starting without DB.");
+    } else {
+        try {
+            await mongoose.connect(mongoUri);
+            console.log("✅ MongoDB connected");
+            await ensureAdminUser();
+            dbReady = true;
+        } catch (err) {
+            console.warn("⚠️  MongoDB connection failed — continuing without DB:", err?.message);
+        }
     }
-
-    try {
-        await mongoose.connect(mongoUri);
-        console.log("✅ MongoDB connected");
-        await ensureAdminUser();
-        app.listen(PORT, () => {
-            console.log(`🚀 Server running on port ${PORT}`);
-        });
-    } catch (err) {
-        console.error("❌ Failed to start server", err);
-        process.exit(1);
-    }
+    app.listen(PORT, () => {
+        console.log(`🚀 Server running on port ${PORT}${dbReady ? " (DB connected)" : " (no DB)"}`);
+    });
 };
 
 bootstrap();
