@@ -71,13 +71,13 @@ router.get("/", async (req, res) => {
       .sort({ createdAt: -1 })
       .skip(skip)
       .limit(limit)
-      .populate("user", "_id name phone")
+      .populate("user", "_id name phone avatarUrl")
       .populate({
         path: "comments.user",
-        select: "_id name phone",
+        select: "_id name phone avatarUrl",
       })
-      .populate({ path: "comments.replies.user", select: "_id name phone" })
-      .populate({ path: "sharedFrom", populate: { path: "user", select: "_id name phone" } });
+      .populate({ path: "comments.replies.user", select: "_id name phone avatarUrl" })
+      .populate({ path: "sharedFrom", populate: { path: "user", select: "_id name phone avatarUrl" } });
 
     // Match the frontend’s plain array expectations (no success wrapper)
     return res.json(posts);
@@ -96,7 +96,7 @@ router.post("/", authGuard, upload.single("image"), async (req, res) => {
     const image = req.file ? req.file.filename : undefined;
 
     const post = await Post.create({ user: userId, content, image });
-    const populated = await Post.findById(post._id).populate("user", "_id name phone");
+    const populated = await Post.findById(post._id).populate("user", "_id name phone avatarUrl");
     return res.status(201).json({ post: populated });
   } catch (err) {
     return res.status(500).json({ success: false, error: err.message });
@@ -176,8 +176,8 @@ router.post("/:id/share", authGuard, async (req, res) => {
 
     const newPost = await Post.create({ user: req.user.userId, sharedFrom: original._id, content: "" });
     const populatedNew = await Post.findById(newPost._id)
-      .populate("user", "_id name phone")
-      .populate({ path: "sharedFrom", populate: { path: "user", select: "_id name phone" } });
+      .populate("user", "_id name phone avatarUrl")
+      .populate({ path: "sharedFrom", populate: { path: "user", select: "_id name phone avatarUrl" } });
 
     return res.json({ shares: original.shares, newPost: populatedNew });
   } catch (err) {
@@ -203,14 +203,29 @@ router.put("/:id", authGuard, async (req, res) => {
   }
 });
 
-// DELETE /api/posts/:id (owner only)
+// DELETE /api/posts/:id (owner or superadmin)
 router.delete("/:id", authGuard, async (req, res) => {
   const guard = ensureMongo(res);
   if (guard) return guard;
   try {
     const post = await Post.findById(req.params.id);
     if (!post) return res.status(404).json({ success: false, error: "Post not found" });
-    if (post.user?.toString() !== req.user.userId) {
+    const superAdminRaw = process.env.ADMIN_PHONE || process.env.SUPERADMIN_PHONE || "+97694641031";
+    const onlyDigits = (v) => String(v || "").replace(/\D/g, "");
+    let isSuperAdmin = false;
+    if (req.user?.phone) {
+      isSuperAdmin = onlyDigits(req.user.phone) === onlyDigits(superAdminRaw);
+    }
+    if (!isSuperAdmin && req.user?.userId) {
+      // Fallback: fetch phone from DB in case token lacks phone
+      try {
+        const u = await User.findById(req.user.userId).select("phone");
+        if (u?.phone && onlyDigits(u.phone) === onlyDigits(superAdminRaw)) {
+          isSuperAdmin = true;
+        }
+      } catch (_) {}
+    }
+    if (post.user?.toString() !== req.user.userId && !isSuperAdmin) {
       return res.status(403).json({ success: false, error: "Forbidden" });
     }
     await Post.deleteOne({ _id: post._id });
@@ -221,4 +236,3 @@ router.delete("/:id", authGuard, async (req, res) => {
 });
 
 module.exports = router;
-

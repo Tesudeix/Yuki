@@ -13,6 +13,7 @@ const userRoutes = require("./routes/user");
 const bookingRoutes = require("./routes/booking");
 const adminRoutes = require("./routes/admin");
 const postRoutes = require("./routes/posts");
+const lessonsRoutes = require("./routes/lessons");
 
 const app = express();
 // When behind reverse proxies (Nginx/Cloudflare), trust the forwarded headers
@@ -74,6 +75,7 @@ app.use("/users", userRoutes);
 app.use("/booking", bookingRoutes);
 app.use("/admin", adminRoutes);
 app.use("/api/posts", postRoutes);
+app.use("/api/lessons", lessonsRoutes);
 
 // Open upload endpoint (multipart/form-data)
 // In Yuki/app.js

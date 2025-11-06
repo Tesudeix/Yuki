@@ -47,6 +47,7 @@ const formatUser = (userDoc) => {
         name: doc.name ?? null,
         email: doc.email ?? null,
         role: doc.role ?? null,
+        classroomAccess: Boolean(doc.classroomAccess),
         age: typeof doc.age === "number" ? doc.age : null,
         avatarUrl: doc.avatarUrl ?? null,
         lastVerifiedAt: doc.lastVerifiedAt ?? null,
@@ -318,6 +319,56 @@ router.patch("/profile/avatar", async (req, res) => {
         return sendSuccess(res, 200, { user: formatUser(user) });
     } catch (err) {
         return sendError(res, 500, "Failed to update avatar", { details: err.message });
+    }
+});
+
+// --- Superadmin utilities ---
+const superAdmins = new Set([
+    process.env.ADMIN_PHONE || process.env.SUPERADMIN_PHONE || "+97694641031",
+]);
+const isSuperAdminPhone = (phone) => (phone ? superAdmins.has(String(phone)) : false);
+
+// DELETE /users/admin/:id  (superadmin only)
+router.delete("/admin/:id", authGuard, async (req, res) => {
+    const mongoGuard = ensureMongoConnection(res);
+    if (mongoGuard) return mongoGuard;
+    try {
+        const callerPhone = req.user?.phone;
+        if (!isSuperAdminPhone(callerPhone)) {
+            return sendError(res, 403, "Forbidden");
+        }
+        const { id } = req.params;
+        const user = await User.findByIdAndDelete(id);
+        if (!user) return sendError(res, 404, "User not found");
+        return sendSuccess(res, 200, {});
+    } catch (err) {
+        return sendError(res, 500, "Failed to delete user", { details: err.message });
+    }
+});
+
+// POST /users/admin/grant-classroom  (superadmin only)
+// Body: { phone: string, access?: boolean }
+router.post("/admin/grant-classroom", authGuard, async (req, res) => {
+    const mongoGuard = ensureMongoConnection(res);
+    if (mongoGuard) return mongoGuard;
+    try {
+        const callerPhone = req.user?.phone;
+        if (!isSuperAdminPhone(callerPhone)) {
+            return sendError(res, 403, "Forbidden");
+        }
+        const rawPhone = req.body?.phone;
+        const access = typeof req.body?.access === "boolean" ? req.body.access : true;
+        const phone = sanitizePhone(String(rawPhone || ""));
+        if (!phone) return sendError(res, 400, "Valid phone is required");
+        const user = await User.findOneAndUpdate(
+            { phone },
+            { $set: { classroomAccess: access } },
+            { new: true },
+        );
+        if (!user) return sendError(res, 404, "User not found");
+        return sendSuccess(res, 200, { user: formatUser(user) });
+    } catch (err) {
+        return sendError(res, 500, "Failed to update classroom access", { details: err.message });
     }
 });
 

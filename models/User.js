@@ -7,6 +7,7 @@ const userSchema = new mongoose.Schema({
     role: String,
     age: Number,
     avatarUrl: { type: String, trim: true },
+    classroomAccess: { type: Boolean, default: false },
     passwordHash: { type: String, select: false },
     hasPassword: { type: Boolean, default: false },
     lastVerifiedAt: Date,
