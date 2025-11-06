@@ -48,6 +48,7 @@ const formatUser = (userDoc) => {
         email: doc.email ?? null,
         role: doc.role ?? null,
         age: typeof doc.age === "number" ? doc.age : null,
+        avatarUrl: doc.avatarUrl ?? null,
         lastVerifiedAt: doc.lastVerifiedAt ?? null,
         lastLoginAt: doc.lastLoginAt ?? null,
         lastPasswordResetAt: doc.lastPasswordResetAt ?? null,
@@ -257,6 +258,66 @@ router.get("/profile", authGuard, async (req, res) => {
         return sendSuccess(res, 200, { user: formatUser(user) });
     } catch (err) {
         return sendError(res, 500, "Failed to load profile", { details: err.message });
+    }
+});
+
+// Update the authenticated user's avatar URL
+// Accepts either Authorization: Bearer <jwt> (preferred) OR X-User-Id header for compatibility
+router.patch("/profile/avatar", async (req, res) => {
+    const mongoGuard = ensureMongoConnection(res);
+    if (mongoGuard) {
+        return mongoGuard;
+    }
+
+    try {
+        const rawAuth = req.headers.authorization || "";
+        const bearer = rawAuth.startsWith("Bearer ") ? rawAuth.slice(7).trim() : null;
+        let userId = null;
+        if (bearer) {
+            try {
+                const payload = verifyJwt(bearer);
+                userId = payload?.userId || null;
+            } catch (e) {
+                // ignore and fall back to header
+                userId = null;
+            }
+        }
+
+        if (!userId) {
+            const headerId = req.get("x-user-id") || req.get("X-User-Id");
+            userId = headerId ? String(headerId).trim() : null;
+        }
+
+        if (!userId) {
+            return sendError(res, 401, "Missing user identity");
+        }
+
+        const avatarUrl = typeof req.body?.avatarUrl === "string" ? req.body.avatarUrl.trim() : "";
+        if (!avatarUrl) {
+            return sendError(res, 400, "avatarUrl is required");
+        }
+
+        // Accept either ObjectId or string ids
+        let query;
+        if (mongoose.Types.ObjectId.isValid(userId)) {
+            query = { _id: new mongoose.Types.ObjectId(userId) };
+        } else {
+            query = { _id: userId };
+        }
+
+        const user = await User.findOneAndUpdate(
+            query,
+            { $set: { avatarUrl } },
+            { new: true },
+        );
+
+        if (!user) {
+            return sendError(res, 404, "User not found");
+        }
+
+        return sendSuccess(res, 200, { user: formatUser(user) });
+    } catch (err) {
+        return sendError(res, 500, "Failed to update avatar", { details: err.message });
     }
 });
 

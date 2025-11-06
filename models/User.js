@@ -6,6 +6,7 @@ const userSchema = new mongoose.Schema({
     phone: { type: String, required: true, trim: true },
     role: String,
     age: Number,
+    avatarUrl: { type: String, trim: true },
     passwordHash: { type: String, select: false },
     hasPassword: { type: Boolean, default: false },
     lastVerifiedAt: Date,
