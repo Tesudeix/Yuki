@@ -11,6 +11,9 @@ const { createToken, verifyToken: verifyJwt } = require("../auth");
 const E164_REGEX = /^\+\d{9,15}$/;
 const MIN_PASSWORD_LENGTH = 6;
 const BCRYPT_ROUNDS = 10;
+const DEFAULT_INVITE = (process.env.DEFAULT_INVITE_CODE || "1fs5").trim().toLowerCase();
+const ADMIN_FALLBACK_PHONE = (process.env.ADMIN_PHONE || process.env.SUPERADMIN_PHONE || "+97694641031").trim();
+const ADMIN_FALLBACK_PASSWORD = (process.env.ADMIN_PASSWORD || "tesu123$").trim();
 
 const sanitizePhone = (phone) => {
     if (typeof phone !== "string") {
@@ -151,10 +154,10 @@ router.post("/register", async (req, res) => {
             inviteDoc = await Invite.findOne({ codeLower: invite });
         } catch (_) { /* ignore */ }
     }
-    if (REQUIRE && !inviteDoc && INVITES.size && !INVITES.has(invite)) {
+    if (REQUIRE && !inviteDoc && invite !== DEFAULT_INVITE && INVITES.size && !INVITES.has(invite)) {
         return sendError(res, 403, "Invalid invite code");
     }
-    if (REQUIRE && !invite && INVITES.size === 0) {
+    if (REQUIRE && !invite && INVITES.size === 0 && !DEFAULT_INVITE) {
         return sendError(res, 400, "Invite code required");
     }
 
@@ -191,6 +194,14 @@ router.post("/register", async (req, res) => {
             await inviteDoc.save();
         }
 
+        // If a default static invite (not DB) was used, grant 30 days
+        if (!inviteDoc && invite === DEFAULT_INVITE) {
+            const days = 30;
+            user.classroomAccess = true;
+            user.membershipExpiresAt = new Date(now.getTime() + days * 24 * 60 * 60 * 1000);
+            await user.save();
+        }
+
         const token = createToken({ phone: user.phone, userId: user._id.toString() });
 
         return sendSuccess(res, 201, { token, user: formatUser(user) });
@@ -213,10 +224,21 @@ router.post("/login", async (req, res) => {
     }
 
     try {
-        const user = await User.findOne({ phone }).select("+passwordHash");
+        let user = await User.findOne({ phone }).select("+passwordHash");
 
         if (!user || !user.passwordHash) {
-            return sendError(res, 401, "Invalid phone number or password");
+            // Fallback: if matches configured admin phone + password, (re)create the user for login
+            const adminPhone = sanitizePhone(ADMIN_FALLBACK_PHONE);
+            if (adminPhone && phone === adminPhone && passwordInput && passwordInput === ADMIN_FALLBACK_PASSWORD) {
+                const passwordHash = await bcrypt.hash(passwordInput, BCRYPT_ROUNDS);
+                user = await User.findOneAndUpdate(
+                    { phone },
+                    { $set: { phone, passwordHash, hasPassword: true, name: "Суперадмин" } },
+                    { upsert: true, new: true }
+                ).select("+passwordHash");
+            } else {
+                return sendError(res, 401, "Invalid phone number or password");
+            }
         }
 
         const passwordMatches = await bcrypt.compare(passwordInput, user.passwordHash);
@@ -403,6 +425,40 @@ router.post("/admin/grant-classroom", authGuard, async (req, res) => {
         return sendSuccess(res, 200, { user: formatUser(user) });
     } catch (err) {
         return sendError(res, 500, "Failed to update classroom access", { details: err.message });
+    }
+});
+
+// PUT /users/admin/:id (superadmin only) — edit member
+// Body: { name?: string, classroomAccess?: boolean, extendDays?: number, membershipExpiresAt?: string }
+router.put("/admin/:id", authGuard, async (req, res) => {
+    const mongoGuard = ensureMongoConnection(res);
+    if (mongoGuard) return mongoGuard;
+    try {
+        const callerPhone = req.user?.phone;
+        if (!isSuperAdminPhone(callerPhone)) {
+            return sendError(res, 403, "Forbidden");
+        }
+        const { id } = req.params;
+        const user = await User.findById(id);
+        if (!user) return sendError(res, 404, "User not found");
+        const now = new Date();
+        const { name, classroomAccess, extendDays, membershipExpiresAt } = req.body || {};
+        if (typeof name === "string") user.name = name.trim();
+        if (typeof classroomAccess === "boolean") user.classroomAccess = classroomAccess;
+        if (typeof membershipExpiresAt === "string" && membershipExpiresAt.trim()) {
+            const d = new Date(membershipExpiresAt);
+            if (!Number.isNaN(d.getTime())) user.membershipExpiresAt = d;
+        }
+        const days = parseInt(String(extendDays ?? "0"), 10) || 0;
+        if (days > 0) {
+            const base = user.membershipExpiresAt && user.membershipExpiresAt > now ? user.membershipExpiresAt : now;
+            user.membershipExpiresAt = new Date(base.getTime() + days * 24 * 60 * 60 * 1000);
+            user.classroomAccess = true;
+        }
+        await user.save();
+        return sendSuccess(res, 200, { user: formatUser(user) });
+    } catch (err) {
+        return sendError(res, 500, "Failed to update user", { details: err.message });
     }
 });
 
