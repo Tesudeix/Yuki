@@ -282,3 +282,29 @@ const bootstrap = async () => {
 };
 
 bootstrap();
+
+
+
+// Background: expire memberships beyond 30 days (or configured days)
+const User = require("./models/User");
+const startMembershipWatcher = () => {
+    const run = async () => {
+        try {
+            if (mongoose.connection.readyState !== 1) return;
+            const now = new Date();
+            await User.updateMany(
+                { classroomAccess: true, membershipExpiresAt: { $lte: now } },
+                { $set: { classroomAccess: false } }
+            );
+        } catch (err) {
+            // best-effort; do not crash
+            console.warn("membership expiry check failed", err?.message);
+        }
+    };
+    // every hour
+    setInterval(run, 60 * 60 * 1000);
+    // initial delay
+    setTimeout(run, 10 * 1000);
+};
+
+startMembershipWatcher();

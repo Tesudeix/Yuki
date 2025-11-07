@@ -13,6 +13,7 @@ const userSchema = new mongoose.Schema({
     lastVerifiedAt: Date,
     lastLoginAt: Date,
     lastPasswordResetAt: Date,
+    membershipExpiresAt: Date,
 }, { timestamps: true });
 
 userSchema.index({ phone: 1 }, { unique: true });

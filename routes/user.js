@@ -1,6 +1,7 @@
 const express = require("express");
 const mongoose = require("mongoose");
 const bcrypt = require("bcryptjs");
+const Invite = require("../models/Invite");
 
 const router = express.Router();
 
@@ -126,7 +127,7 @@ router.post("/register", async (req, res) => {
     const name = typeof req.body.name === "string" ? req.body.name.trim() || undefined : undefined;
     const inviteRaw = typeof req.body.inviteCode === "string" ? req.body.inviteCode : "";
     const invite = inviteRaw.trim().toLowerCase();
-    const INVITES = new Set((process.env.INVITE_CODES || "1fs5,vdf4").split(",").map((s) => s.trim().toLowerCase()).filter(Boolean));
+    const INVITES = new Set((process.env.INVITE_CODES || "").split(",").map((s) => s.trim().toLowerCase()).filter(Boolean));
     const REQUIRE = (process.env.REQUIRE_INVITE ?? "true").toLowerCase() !== "false";
 
     if (!phone) {
@@ -143,13 +144,18 @@ router.post("/register", async (req, res) => {
         return sendError(res, 400, validation.error);
     }
 
-    if (REQUIRE) {
-        if (!invite) {
-            return sendError(res, 400, "Invite code required");
-        }
-        if (INVITES.size && !INVITES.has(invite)) {
-            return sendError(res, 403, "Invalid invite code");
-        }
+    // DB-backed invite enforcement (one-time codes)
+    let inviteDoc = null;
+    if (invite) {
+        try {
+            inviteDoc = await Invite.findOne({ codeLower: invite });
+        } catch (_) { /* ignore */ }
+    }
+    if (REQUIRE && !inviteDoc && INVITES.size && !INVITES.has(invite)) {
+        return sendError(res, 403, "Invalid invite code");
+    }
+    if (REQUIRE && !invite && INVITES.size === 0) {
+        return sendError(res, 400, "Invite code required");
     }
 
     try {
@@ -169,6 +175,21 @@ router.post("/register", async (req, res) => {
             lastLoginAt: now,
             lastVerifiedAt: now,
         });
+
+        // If invite doc present and unused, mark used and grant 30-day membership
+        if (inviteDoc) {
+            if (inviteDoc.uses >= (inviteDoc.maxUses || 1) || (inviteDoc.expiresAt && inviteDoc.expiresAt < now)) {
+                return sendError(res, 403, "Invite already used or expired");
+            }
+            const days = typeof inviteDoc.days === "number" && inviteDoc.days > 0 ? inviteDoc.days : 30;
+            user.classroomAccess = true;
+            user.membershipExpiresAt = new Date(now.getTime() + days * 24 * 60 * 60 * 1000);
+            await user.save();
+            inviteDoc.uses = (inviteDoc.uses || 0) + 1;
+            inviteDoc.usedBy = user._id;
+            inviteDoc.usedAt = new Date();
+            await inviteDoc.save();
+        }
 
         const token = createToken({ phone: user.phone, userId: user._id.toString() });
 
@@ -423,6 +444,67 @@ router.get("/members", async (req, res) => {
         })) });
     } catch (err) {
         return sendError(res, 500, "Failed to load members", { details: err.message });
+    }
+});
+
+
+
+// --- Invite code management (superadmin) ---
+const randomCode = (len = 8) => {
+    const alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"; // avoid ambiguous chars
+    let out = "";
+    for (let i = 0; i < len; i += 1) out += alphabet[Math.floor(Math.random() * alphabet.length)];
+    return out;
+};
+
+// POST /users/admin/invites { count?: number, days?: number }
+router.post("/admin/invites", authGuard, async (req, res) => {
+    const mongoGuard = ensureMongoConnection(res);
+    if (mongoGuard) return mongoGuard;
+    try {
+        const callerPhone = req.user?.phone;
+        if (!isSuperAdminPhone(callerPhone)) return sendError(res, 403, "Forbidden");
+        const count = Math.min(Math.max(parseInt(String(req.body?.count ?? "1"), 10) || 1, 1), 100);
+        const days = Math.max(parseInt(String(req.body?.days ?? "30"), 10) || 30, 1);
+        const docs = [];
+        for (let i = 0; i < count; i += 1) {
+            const code = randomCode(8);
+            docs.push({ code, codeLower: code.toLowerCase(), maxUses: 1, uses: 0, days });
+        }
+        const created = await Invite.insertMany(docs, { ordered: false }).catch(async () => {
+            const fresh = [];
+            for (const _ of docs) {
+                let ok = false;
+                for (let attempt = 0; attempt < 3 && !ok; attempt += 1) {
+                    const code = randomCode(8);
+                    try {
+                        const one = await Invite.create({ code, codeLower: code.toLowerCase(), maxUses: 1, uses: 0, days });
+                        fresh.push(one);
+                        ok = true;
+                    } catch (_) { /* collision retry */ }
+                }
+            }
+            return fresh;
+        });
+        return sendSuccess(res, 201, { invites: created.map((d) => ({ code: d.code, days: d.days })) });
+    } catch (err) {
+        return sendError(res, 500, "Failed to create invites", { details: err.message });
+    }
+});
+
+// GET /users/admin/invites?status=unused|used
+router.get("/admin/invites", authGuard, async (req, res) => {
+    const mongoGuard = ensureMongoConnection(res);
+    if (mongoGuard) return mongoGuard;
+    try {
+        const callerPhone = req.user?.phone;
+        if (!isSuperAdminPhone(callerPhone)) return sendError(res, 403, "Forbidden");
+        const status = String(req.query?.status || "").toLowerCase();
+        const filter = status === "used" ? { uses: { $gte: 1 } } : status === "unused" ? { uses: { $lt: 1 } } : {};
+        const items = await Invite.find(filter).sort({ createdAt: -1 }).limit(500).lean();
+        return sendSuccess(res, 200, { invites: items.map((i) => ({ code: i.code, uses: i.uses, days: i.days, usedAt: i.usedAt || null })) });
+    } catch (err) {
+        return sendError(res, 500, "Failed to list invites", { details: err.message });
     }
 });
 
