@@ -14,6 +14,7 @@ const bookingRoutes = require("./routes/booking");
 const adminRoutes = require("./routes/admin");
 const postRoutes = require("./routes/posts");
 const lessonsRoutes = require("./routes/lessons");
+const productsRoutes = require("./routes/products");
 
 const app = express();
 // When behind reverse proxies (Nginx/Cloudflare), trust the forwarded headers
@@ -76,6 +77,7 @@ app.use("/booking", bookingRoutes);
 app.use("/admin", adminRoutes);
 app.use("/api/posts", postRoutes);
 app.use("/api/lessons", lessonsRoutes);
+app.use("/api/products", productsRoutes);
 
 // Open upload endpoint (multipart/form-data)
 // In Yuki/app.js
@@ -256,7 +258,8 @@ const PORT = Number.parseInt(process.env.PORT ?? "4000", 10);
 const { ensureAdminUser } = require("./services/admin-setup");
 
 const bootstrap = async () => {
-    const mongoUri = process.env.MONGO_URI;
+    // Support multiple common env var names for convenience
+    const mongoUri = process.env.MONGO_URI || process.env.MONGODB_URI || process.env.MONGODB_URL;
     let dbReady = false;
     if (!mongoUri) {
         console.warn("⚠️  MONGO_URI not set. Starting without DB.");
@@ -268,6 +271,9 @@ const bootstrap = async () => {
             dbReady = true;
         } catch (err) {
             console.warn("⚠️  MongoDB connection failed — continuing without DB:", err?.message);
+            console.warn("   Make sure your connection string uses mongodb:// or mongodb+srv:// and is properly URL-encoded.");
+            console.warn("   Example (local): mongodb://127.0.0.1:27017/tesudeix");
+            console.warn("   Example (Atlas): mongodb+srv://user:pass@cluster.x.mongodb.net/tesudeix?retryWrites=true&w=majority&appName=Cluster");
         }
     }
     app.listen(PORT, () => {

@@ -124,6 +124,10 @@ router.post("/register", async (req, res) => {
     const phone = sanitizePhone(req.body.phone);
     const passwordInput = normalizePassword(req.body.password);
     const name = typeof req.body.name === "string" ? req.body.name.trim() || undefined : undefined;
+    const inviteRaw = typeof req.body.inviteCode === "string" ? req.body.inviteCode : "";
+    const invite = inviteRaw.trim().toLowerCase();
+    const INVITES = new Set((process.env.INVITE_CODES || "1fs5,vdf4").split(",").map((s) => s.trim().toLowerCase()).filter(Boolean));
+    const REQUIRE = (process.env.REQUIRE_INVITE ?? "true").toLowerCase() !== "false";
 
     if (!phone) {
         return sendError(res, 400, "Phone number must be provided in E.164 format (e.g. +15551234567)");
@@ -137,6 +141,15 @@ router.post("/register", async (req, res) => {
     const validation = validatePassword(passwordInput);
     if (!validation.ok) {
         return sendError(res, 400, validation.error);
+    }
+
+    if (REQUIRE) {
+        if (!invite) {
+            return sendError(res, 400, "Invite code required");
+        }
+        if (INVITES.size && !INVITES.has(invite)) {
+            return sendError(res, 403, "Invalid invite code");
+        }
     }
 
     try {
@@ -369,6 +382,47 @@ router.post("/admin/grant-classroom", authGuard, async (req, res) => {
         return sendSuccess(res, 200, { user: formatUser(user) });
     } catch (err) {
         return sendError(res, 500, "Failed to update classroom access", { details: err.message });
+    }
+});
+
+// Public members list with count
+// GET /users/members?limit=200&page=1&q=
+router.get("/members", async (req, res) => {
+    const mongoGuard = ensureMongoConnection(res);
+    if (mongoGuard) return mongoGuard;
+    try {
+        const limit = Math.max(parseInt(String(req.query.limit || "200"), 10) || 200, 1);
+        const page = Math.max(parseInt(String(req.query.page || "1"), 10) || 1, 1);
+        const skip = (page - 1) * limit;
+        const q = typeof req.query.q === "string" ? req.query.q.trim() : "";
+        const filter = q
+            ? {
+                $or: [
+                    { name: { $regex: q, $options: "i" } },
+                    { phone: { $regex: q.replace(/[^\d+]/g, ""), $options: "i" } },
+                ],
+            }
+            : {};
+
+        const [total, members] = await Promise.all([
+            User.countDocuments(filter),
+            User.find(filter)
+                .sort({ createdAt: -1 })
+                .skip(skip)
+                .limit(limit)
+                .select("_id name phone avatarUrl createdAt")
+                .lean(),
+        ]);
+
+        return res.json({ total, page, limit, members: members.map((m) => ({
+            id: String(m._id),
+            name: m.name || null,
+            phone: m.phone || null,
+            avatarUrl: m.avatarUrl || null,
+            createdAt: m.createdAt || null,
+        })) });
+    } catch (err) {
+        return sendError(res, 500, "Failed to load members", { details: err.message });
     }
 });
 

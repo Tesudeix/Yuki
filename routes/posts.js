@@ -58,7 +58,9 @@ const authGuard = (req, res, next) => {
   }
 };
 
-// GET /api/posts?page=1&limit=10
+const CATEGORIES = new Set(["General", "News", "Tools", "Tasks"]);
+
+// GET /api/posts?page=1&limit=10&category=News
 router.get("/", async (req, res) => {
   const guard = ensureMongo(res);
   if (guard) return guard;
@@ -66,8 +68,11 @@ router.get("/", async (req, res) => {
     const page = Math.max(parseInt(req.query.page || "1", 10), 1);
     const limit = Math.max(parseInt(req.query.limit || "10", 10), 1);
     const skip = (page - 1) * limit;
+    const rawCat = typeof req.query.category === "string" ? req.query.category.trim() : "";
+    const category = CATEGORIES.has(rawCat) ? rawCat : null;
+    const filter = category ? { category } : {};
 
-    const posts = await Post.find({})
+    const posts = await Post.find(filter)
       .sort({ createdAt: -1 })
       .skip(skip)
       .limit(limit)
@@ -86,7 +91,7 @@ router.get("/", async (req, res) => {
   }
 });
 
-// POST /api/posts  (multipart form: content, image?)
+// POST /api/posts  (multipart form: content, image?, category?)
 router.post("/", authGuard, upload.single("image"), async (req, res) => {
   const guard = ensureMongo(res);
   if (guard) return guard;
@@ -95,7 +100,10 @@ router.post("/", authGuard, upload.single("image"), async (req, res) => {
     const userId = req.user?.userId; // from token payload in user routes
     const image = req.file ? req.file.filename : undefined;
 
-    const post = await Post.create({ user: userId, content, image });
+    const rawCat = typeof req.body?.category === "string" ? req.body.category.trim() : "";
+    const category = CATEGORIES.has(rawCat) ? rawCat : "General";
+
+    const post = await Post.create({ user: userId, content, image, category });
     const populated = await Post.findById(post._id).populate("user", "_id name phone avatarUrl");
     return res.status(201).json({ post: populated });
   } catch (err) {

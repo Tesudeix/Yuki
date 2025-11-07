@@ -25,6 +25,7 @@ const postSchema = new mongoose.Schema(
     content: { type: String, trim: true },
     image: { type: String },
     images: [{ type: String }],
+    category: { type: String, enum: ["General", "News", "Tools", "Tasks"], default: "General", index: true },
     likes: [{ type: ObjectId, ref: "User" }],
     comments: [commentSchema],
     shares: { type: Number, default: 0 },
@@ -34,4 +35,3 @@ const postSchema = new mongoose.Schema(
 );
 
 module.exports = mongoose.model("Post", postSchema);
-
