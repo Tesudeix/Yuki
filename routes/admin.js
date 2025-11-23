@@ -68,9 +68,25 @@ router.post("/login", async (req, res) => {
     await ensureAdminUser();
 
     try {
-        const admin = await AdminUser.findOne({ phone });
+        let admin = await AdminUser.findOne({ phone });
         if (!admin) {
-            return res.status(401).json({ success: false, error: "Буруу утас эсвэл нууц үг." });
+            // If missing, allow bootstrap with configured ADMIN_PHONE + ADMIN_PASSWORD
+            const { ADMIN_PHONE, normalizeAdminPhone: normPhone } = require("../services/admin-setup");
+            const adminPhoneFromEnv = normPhone(ADMIN_PHONE);
+            const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || "tesu123$";
+            if (adminPhoneFromEnv && phone === adminPhoneFromEnv && password) {
+                const passwordHash = await bcrypt.hash(ADMIN_PASSWORD, Number.parseInt(process.env.BCRYPT_ROUNDS ?? "10", 10) || 10);
+                admin = await AdminUser.create({ phone, passwordHash, name: "Админ" });
+                try {
+                    await User.findOneAndUpdate(
+                        { phone },
+                        { $set: { phone, passwordHash, hasPassword: true, name: "Админ хэрэглэгч" } },
+                        { upsert: true, new: true },
+                    );
+                } catch (_) { /* ignore */ }
+            } else {
+                return res.status(401).json({ success: false, error: "Буруу утас эсвэл нууц үг." });
+            }
         }
 
         const matches = await bcrypt.compare(password, admin.passwordHash);

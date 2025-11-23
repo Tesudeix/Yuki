@@ -3,33 +3,27 @@ const bcrypt = require("bcryptjs");
 const AdminUser = require("../models/AdminUser");
 const User = require("../models/User");
 
-const DEFAULT_ADMIN_PHONE = "+97699113769";
-const DEFAULT_ADMIN_PASSWORD = "admin123";
+const DEFAULT_ADMIN_PHONE = "+97694641031";
+const DEFAULT_ADMIN_PASSWORD = "tesu123$";
 const BCRYPT_ROUNDS = Number.parseInt(process.env.BCRYPT_ROUNDS ?? "10", 10) || 10;
 
 const ADMIN_PHONE = (process.env.ADMIN_PHONE ?? DEFAULT_ADMIN_PHONE).trim();
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD ?? DEFAULT_ADMIN_PASSWORD;
 
 const normalizeAdminPhone = (value) => {
-    if (typeof value !== "string") {
-        return "";
-    }
-
+    if (typeof value !== "string") return "";
     const trimmed = value.trim();
-    if (!trimmed) {
-        return "";
+    if (!trimmed) return "";
+    const onlyDigits = trimmed.replace(/\D/g, "");
+    if (!onlyDigits) return "";
+    // If 8-digit local number, assume Mongolia +976
+    if (!trimmed.startsWith("+") && onlyDigits.length === 8) {
+        return `+976${onlyDigits}`;
     }
-
-    const digits = trimmed.replace(/[^\d+]/g, "");
-    if (!digits) {
-        return "";
+    if (trimmed.startsWith("+")) {
+        return `+${onlyDigits}`;
     }
-
-    if (digits.startsWith("+")) {
-        return `+${digits.slice(1).replace(/\D/g, "")}`;
-    }
-
-    return `+${digits.replace(/\D/g, "")}`;
+    return `+${onlyDigits}`;
 };
 
 let ensureAdminPromise = null;

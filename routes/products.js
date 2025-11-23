@@ -65,12 +65,20 @@ const adminOnly = (req, res, next) => {
   return res.status(403).json({ success: false, error: "Forbidden" });
 };
 
+// Allowed categories for validation and filtering
+const ALLOWED_CATEGORIES = new Set(["Prompt", "Design", "Clothes"]);
+
 // GET /api/products
 router.get("/", async (req, res) => {
   const guard = ensureMongo(res);
   if (guard) return guard;
   try {
-    const items = await Product.find({}).sort({ createdAt: -1 }).lean();
+    const { category } = req.query || {};
+    const filter = {};
+    if (category && typeof category === "string" && ALLOWED_CATEGORIES.has(category)) {
+      filter.category = category;
+    }
+    const items = await Product.find(filter).sort({ createdAt: -1 }).lean();
     return res.json(items);
   } catch (err) {
     return res.status(500).json({ success: false, error: err.message });
@@ -82,11 +90,13 @@ router.post("/", authGuard, adminOnly, upload.single("image"), async (req, res) 
   const guard = ensureMongo(res);
   if (guard) return guard;
   try {
-    const { name, price, description } = req.body || {};
-    if (!name || !price) return res.status(400).json({ success: false, error: "name and price are required" });
+    const { name, price, description, category } = req.body || {};
+    if (!name || !price || !category) return res.status(400).json({ success: false, error: "name, price and category are required" });
+    if (!ALLOWED_CATEGORIES.has(String(category))) return res.status(400).json({ success: false, error: "Invalid category" });
     const item = await Product.create({
       name: String(name),
       price: Number(price),
+      category: String(category),
       description: description ? String(description) : undefined,
       image: req.file ? req.file.filename : undefined,
     });
@@ -110,4 +120,3 @@ router.delete("/:id", authGuard, adminOnly, async (req, res) => {
 });
 
 module.exports = router;
-

@@ -128,10 +128,10 @@ router.post("/register", async (req, res) => {
     const phone = sanitizePhone(req.body.phone);
     const passwordInput = normalizePassword(req.body.password);
     const name = typeof req.body.name === "string" ? req.body.name.trim() || undefined : undefined;
-    const inviteRaw = typeof req.body.inviteCode === "string" ? req.body.inviteCode : "";
-    const invite = inviteRaw.trim().toLowerCase();
-    const INVITES = new Set((process.env.INVITE_CODES || "").split(",").map((s) => s.trim().toLowerCase()).filter(Boolean));
-    const REQUIRE = (process.env.REQUIRE_INVITE ?? "true").toLowerCase() !== "false";
+    // Free signup flow: ignore invite codes entirely
+    const invite = "";
+    const INVITES = new Set();
+    const REQUIRE = false;
 
     if (!phone) {
         return sendError(res, 400, "Phone number must be provided in E.164 format (e.g. +15551234567)");
@@ -147,19 +147,7 @@ router.post("/register", async (req, res) => {
         return sendError(res, 400, validation.error);
     }
 
-    // DB-backed invite enforcement (one-time codes)
-    let inviteDoc = null;
-    if (invite) {
-        try {
-            inviteDoc = await Invite.findOne({ codeLower: invite });
-        } catch (_) { /* ignore */ }
-    }
-    if (REQUIRE && !inviteDoc && invite !== DEFAULT_INVITE && INVITES.size && !INVITES.has(invite)) {
-        return sendError(res, 403, "Invalid invite code");
-    }
-    if (REQUIRE && !invite && INVITES.size === 0 && !DEFAULT_INVITE) {
-        return sendError(res, 400, "Invite code required");
-    }
+    // Invite enforcement removed
 
     try {
         const existing = await User.findOne({ phone }).select("_id");
@@ -179,28 +167,7 @@ router.post("/register", async (req, res) => {
             lastVerifiedAt: now,
         });
 
-        // If invite doc present and unused, mark used and grant 30-day membership
-        if (inviteDoc) {
-            if (inviteDoc.uses >= (inviteDoc.maxUses || 1) || (inviteDoc.expiresAt && inviteDoc.expiresAt < now)) {
-                return sendError(res, 403, "Invite already used or expired");
-            }
-            const days = typeof inviteDoc.days === "number" && inviteDoc.days > 0 ? inviteDoc.days : 30;
-            user.classroomAccess = true;
-            user.membershipExpiresAt = new Date(now.getTime() + days * 24 * 60 * 60 * 1000);
-            await user.save();
-            inviteDoc.uses = (inviteDoc.uses || 0) + 1;
-            inviteDoc.usedBy = user._id;
-            inviteDoc.usedAt = new Date();
-            await inviteDoc.save();
-        }
-
-        // If a default static invite (not DB) was used, grant 30 days
-        if (!inviteDoc && invite === DEFAULT_INVITE) {
-            const days = 30;
-            user.classroomAccess = true;
-            user.membershipExpiresAt = new Date(now.getTime() + days * 24 * 60 * 60 * 1000);
-            await user.save();
-        }
+        // No automatic membership granted at signup (paywall handles premium)
 
         const token = createToken({ phone: user.phone, userId: user._id.toString() });
 
