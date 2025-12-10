@@ -21,11 +21,12 @@ const app = express();
 app.set("trust proxy", true);
 
 // Middleware
-app.use(cors());
+app.use(cors({ origin: true, credentials: true }));
 // Explicitly allow preflight for safety in varied proxy setups (Express 5 + path-to-regexp v6)
 // Use a RegExp instead of '*' which is no longer supported
-app.options(/.*/, cors());
-app.use(express.json());
+app.options(/.*/, cors({ origin: true, credentials: true }));
+// Limit JSON body to reduce abuse
+app.use(express.json({ limit: "5mb" }));
 
 // Ensure public/uploads directory exists for serving files
 const uploadDir = path.join(__dirname, "public", "uploads");
@@ -243,6 +244,18 @@ app.get("/", (req, res) => {
     res.json({ message: "🚀 Yuki backend is running with Twilio Verify!" });
 });
 
+// Health endpoints
+app.get("/health", (req, res) => {
+    res.json({ success: true, service: "yuki", pid: process.pid });
+});
+
+app.get("/health/mongo", (req, res) => {
+    const state = require("mongoose").connection.readyState;
+    const labels = { 0: "disconnected", 1: "connected", 2: "connecting", 3: "disconnecting" };
+    const payload = { connected: state === 1, status: labels[state] || "unknown", db: require("mongoose").connection.name || null };
+    res.json({ success: true, mongo: payload });
+});
+
 // Centralized error handler (catches Multer and other middleware errors)
 // Ensures malformed multipart requests don't crash the process
 // eslint-disable-next-line no-unused-vars
@@ -276,8 +289,16 @@ const bootstrap = async () => {
             console.warn("   Example (Atlas): mongodb+srv://user:pass@cluster.x.mongodb.net/tesudeix?retryWrites=true&w=majority&appName=Cluster");
         }
     }
-    app.listen(PORT, () => {
+    const server = app.listen(PORT, () => {
         console.log(`🚀 Server running on port ${PORT}${dbReady ? " (DB connected)" : " (no DB)"}`);
+    });
+    server.on('error', (err) => {
+        if (err && (err.code === 'EADDRINUSE' || err.code === 'EACCES')) {
+            console.error(`Port ${PORT} unavailable:`, err.message);
+        } else {
+            console.error('Server error:', err);
+        }
+        process.exitCode = 1;
     });
 };
 
@@ -308,3 +329,13 @@ const startMembershipWatcher = () => {
 };
 
 startMembershipWatcher();
+
+// Process-level safety nets
+process.on('unhandledRejection', (reason) => {
+    // eslint-disable-next-line no-console
+    console.warn('Unhandled promise rejection:', reason);
+});
+process.on('uncaughtException', (err) => {
+    // eslint-disable-next-line no-console
+    console.error('Uncaught exception:', err);
+});
