@@ -65,8 +65,6 @@ const upload = multer({
 ====================== */
 app.use("/api/auth", userRoutes);   // 🔐 register/login/profile
 app.use("/api/users", userRoutes);  // 👤 admin & users
-app.use("/users", userRoutes);
-app.use("/auth", userRoutes);
 app.use("/api/booking", bookingRoutes);
 app.use("/api/admin", adminRoutes);
 app.use("/api/posts", postRoutes);
