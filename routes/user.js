@@ -164,7 +164,12 @@ router.post("/register", async (req, res) => {
 
         // No automatic membership granted at signup (paywall handles premium)
 
-        const token = createToken({ phone: user.phone, userId: user._id.toString() });
+        const token = createToken({
+            phone: user.phone,
+            userId: user._id.toString(),
+            role: user.role,
+        });
+
 
         return sendSuccess(res, 201, { token, user: formatUser(user) });
     } catch (err) {
