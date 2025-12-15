@@ -1,7 +1,6 @@
 const express = require("express");
 const mongoose = require("mongoose");
 const bcrypt = require("bcryptjs");
-const Invite = require("../models/Invite");
 
 const router = express.Router();
 
@@ -11,7 +10,6 @@ const { createToken, verifyToken: verifyJwt } = require("../auth");
 const E164_REGEX = /^\+\d{9,15}$/;
 const MIN_PASSWORD_LENGTH = 6;
 const BCRYPT_ROUNDS = 10;
-const DEFAULT_INVITE = (process.env.DEFAULT_INVITE_CODE || "1fs5").trim().toLowerCase();
 const ADMIN_FALLBACK_PHONE = (process.env.ADMIN_PHONE || process.env.SUPERADMIN_PHONE || "+97694641031").trim();
 const ADMIN_FALLBACK_PASSWORD = (process.env.ADMIN_PASSWORD || "tesu123$").trim();
 
@@ -128,10 +126,7 @@ router.post("/register", async (req, res) => {
     const phone = sanitizePhone(req.body.phone);
     const passwordInput = normalizePassword(req.body.password);
     const name = typeof req.body.name === "string" ? req.body.name.trim() || undefined : undefined;
-    // Free signup flow: ignore invite codes entirely
-    const invite = "";
-    const INVITES = new Set();
-    const REQUIRE = false;
+    // Invite codes are not used in this backend
 
     if (!phone) {
         return sendError(res, 400, "Phone number must be provided in E.164 format (e.g. +15551234567)");
@@ -147,7 +142,7 @@ router.post("/register", async (req, res) => {
         return sendError(res, 400, validation.error);
     }
 
-    // Invite enforcement removed
+    // Invite enforcement removed (no invite model/endpoints)
 
     try {
         const existing = await User.findOne({ phone }).select("_id");
@@ -472,63 +467,6 @@ router.get("/members", async (req, res) => {
 
 
 
-// --- Invite code management (superadmin) ---
-const randomCode = (len = 8) => {
-    const alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"; // avoid ambiguous chars
-    let out = "";
-    for (let i = 0; i < len; i += 1) out += alphabet[Math.floor(Math.random() * alphabet.length)];
-    return out;
-};
-
-// POST /users/admin/invites { count?: number, days?: number }
-router.post("/admin/invites", authGuard, async (req, res) => {
-    const mongoGuard = ensureMongoConnection(res);
-    if (mongoGuard) return mongoGuard;
-    try {
-        const callerPhone = req.user?.phone;
-        if (!isSuperAdminPhone(callerPhone)) return sendError(res, 403, "Forbidden");
-        const count = Math.min(Math.max(parseInt(String(req.body?.count ?? "1"), 10) || 1, 1), 100);
-        const days = Math.max(parseInt(String(req.body?.days ?? "30"), 10) || 30, 1);
-        const docs = [];
-        for (let i = 0; i < count; i += 1) {
-            const code = randomCode(8);
-            docs.push({ code, codeLower: code.toLowerCase(), maxUses: 1, uses: 0, days });
-        }
-        const created = await Invite.insertMany(docs, { ordered: false }).catch(async () => {
-            const fresh = [];
-            for (const _ of docs) {
-                let ok = false;
-                for (let attempt = 0; attempt < 3 && !ok; attempt += 1) {
-                    const code = randomCode(8);
-                    try {
-                        const one = await Invite.create({ code, codeLower: code.toLowerCase(), maxUses: 1, uses: 0, days });
-                        fresh.push(one);
-                        ok = true;
-                    } catch (_) { /* collision retry */ }
-                }
-            }
-            return fresh;
-        });
-        return sendSuccess(res, 201, { invites: created.map((d) => ({ code: d.code, days: d.days })) });
-    } catch (err) {
-        return sendError(res, 500, "Failed to create invites", { details: err.message });
-    }
-});
-
-// GET /users/admin/invites?status=unused|used
-router.get("/admin/invites", authGuard, async (req, res) => {
-    const mongoGuard = ensureMongoConnection(res);
-    if (mongoGuard) return mongoGuard;
-    try {
-        const callerPhone = req.user?.phone;
-        if (!isSuperAdminPhone(callerPhone)) return sendError(res, 403, "Forbidden");
-        const status = String(req.query?.status || "").toLowerCase();
-        const filter = status === "used" ? { uses: { $gte: 1 } } : status === "unused" ? { uses: { $lt: 1 } } : {};
-        const items = await Invite.find(filter).sort({ createdAt: -1 }).limit(500).lean();
-        return sendSuccess(res, 200, { invites: items.map((i) => ({ code: i.code, uses: i.uses, days: i.days, usedAt: i.usedAt || null })) });
-    } catch (err) {
-        return sendError(res, 500, "Failed to list invites", { details: err.message });
-    }
-});
+// Invite code management endpoints removed
 
 module.exports = router;

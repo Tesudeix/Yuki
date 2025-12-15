@@ -7,11 +7,6 @@ const fs = require("fs");
 require("dotenv").config();
 
 // Services
-const {
-    removeBackgroundWithRemoveBg,
-    removeBackgroundWithNanoBanana,
-} = require("./services/background-remove");
-const { optimizeCodeWithOpenAI } = require("./services/code-optimizer");
 const { ensureAdminUser } = require("./services/admin-setup");
 
 // Routes
@@ -70,7 +65,8 @@ const upload = multer({
 ====================== */
 app.use("/api/auth", userRoutes);   // 🔐 register/login/profile
 app.use("/api/users", userRoutes);  // 👤 admin & users
-
+app.use("/users", userRoutes);
+app.use("/auth", userRoutes);
 app.use("/api/booking", bookingRoutes);
 app.use("/api/admin", adminRoutes);
 app.use("/api/posts", postRoutes);
@@ -91,67 +87,7 @@ app.post("/upload", upload.single("file"), (req, res) => {
     });
 });
 
-/* ======================
-   AI / IMAGE
-====================== */
-app.post(
-    "/image/remove-background",
-    upload.single("image"),
-    async (req, res) => {
-        try {
-            if (!req.file) {
-                return res.status(400).json({ success: false, error: "No image" });
-            }
-
-            const apiKey =
-                req.get("x-api-key") ||
-                process.env.NANO_BANANA_API_KEY ||
-                process.env.REMOVE_BG_API_KEY;
-
-            if (!apiKey) {
-                return res
-                    .status(500)
-                    .json({ success: false, error: "API key missing" });
-            }
-
-            const src = path.join(uploadDir, req.file.filename);
-            const outName = req.file.filename.replace(
-                /(\.[\w]+)?$/,
-                "-nobg.png"
-            );
-            const out = path.join(uploadDir, outName);
-
-            const result = await removeBackgroundWithNanoBanana(src, apiKey);
-            if (!result.success) {
-                return res.status(502).json(result);
-            }
-
-            await fs.promises.writeFile(out, result.buffer);
-            const base = `${req.protocol}://${req.get("host")}`;
-
-            res.json({
-                success: true,
-                downloadUrl: `${base}/files/${encodeURIComponent(outName)}`,
-            });
-        } catch (e) {
-            res.status(500).json({ success: false, error: e.message });
-        }
-    }
-);
-
-/* ======================
-   AI CODE OPTIMIZER
-====================== */
-app.post("/ai/optimize-code", async (req, res) => {
-    try {
-        const result = await optimizeCodeWithOpenAI(req.body || {});
-        if (!result.success) return res.status(400).json(result);
-        res.json(result);
-    } catch (e) {
-        res.status(500).json({ success: false, error: e.message });
-    }
-});
-
+/* Background removal endpoint removed intentionally */
 /* ======================
    HEALTH
 ====================== */
