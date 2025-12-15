@@ -16,6 +16,8 @@ const adminRoutes = require("./routes/admin");
 const postRoutes = require("./routes/posts");
 const lessonsRoutes = require("./routes/lessons");
 const productsRoutes = require("./routes/products");
+const orderRoutes = require("./routes/orders");
+const adminCargoRoutes = require("./routes/admin-cargo");
 
 const app = express();
 app.set("trust proxy", true);
@@ -63,6 +65,7 @@ const upload = multer({
 /* ======================
    ROUTE MOUNTS (FIXED)
 ====================== */
+
 app.use("/api/auth", userRoutes);   // 🔐 register/login/profile
 app.use("/api/users", userRoutes);  // 👤 admin & users
 app.use("/api/booking", bookingRoutes);
@@ -70,6 +73,8 @@ app.use("/api/admin", adminRoutes);
 app.use("/api/posts", postRoutes);
 app.use("/api/lessons", lessonsRoutes);
 app.use("/api/products", productsRoutes);
+app.use("/api/orders", orderRoutes);
+app.use("/api/admin/cargo", adminCargoRoutes);
 
 /* ======================
    UPLOAD
