@@ -151,8 +151,8 @@ router.post("/register", async (req, res) => {
 
         const token = createToken({
             phone: user.phone,
-            userId: String(user._id),
-            role: user.role,
+            userId: user._id.toString(),
+            role: user.role || "user",
         });
 
         return sendSuccess(res, 201, { token, user: formatUser(user) });
@@ -209,8 +209,8 @@ router.post("/login", async (req, res) => {
 
         const token = createToken({
             phone: user.phone,
-            userId: String(user._id),
-            role: user.role,
+            userId: user._id.toString(),
+            role: user.role || "user",
         });
 
         return sendSuccess(res, 200, { token, user: formatUser(user) });
