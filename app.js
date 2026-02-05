@@ -131,7 +131,7 @@ const PORT = Number(process.env.PORT || 4000);
 const MONGO_URI =
     process.env.MONGO_URI ||
     process.env.MONGODB_URI ||
-    process.env.MONGODB_URL;
+    "mongodb://127.0.0.1:27017/yuki";
 
 (async () => {
     try {

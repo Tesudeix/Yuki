@@ -59,6 +59,11 @@ const validatePassword = (p) => {
 const formatUser = (u) => {
     if (!u) return null;
     const d = typeof u.toObject === "function" ? u.toObject() : u;
+    const membershipExpiry = d.membershipExpiresAt ? new Date(d.membershipExpiresAt) : null;
+    const membershipActive =
+        d.role === "admin" ||
+        Boolean(d.classroomAccess) ||
+        (membershipExpiry ? membershipExpiry.getTime() > Date.now() : false);
 
     return {
         id: String(d._id),
@@ -67,6 +72,9 @@ const formatUser = (u) => {
         email: d.email ?? null,
         role: d.role ?? null,
         classroomAccess: Boolean(d.classroomAccess),
+        membershipExpiresAt: membershipExpiry ? membershipExpiry.toISOString() : null,
+        membershipActive,
+        credits: typeof d.credits === "number" ? d.credits : 0,
         avatarUrl: d.avatarUrl ?? null,
         age: typeof d.age === "number" ? d.age : null,
         lastVerifiedAt: d.lastVerifiedAt ?? null,
@@ -227,6 +235,26 @@ router.get("/profile", authGuard, async (req, res) => {
         return sendSuccess(res, 200, { user: formatUser(user) });
     } catch (e) {
         return sendError(res, 500, "Profile load failed");
+    }
+});
+
+// PROFILE AVATAR UPDATE
+router.patch("/profile/avatar", authGuard, async (req, res) => {
+    try {
+        const avatarUrl =
+            typeof req.body?.avatarUrl === "string" ? req.body.avatarUrl.trim() : "";
+
+        if (!avatarUrl) return sendError(res, 400, "avatarUrl required");
+
+        const user = await User.findById(req.user.userId);
+        if (!user) return sendError(res, 404, "User not found");
+
+        user.avatarUrl = avatarUrl;
+        await user.save();
+
+        return sendSuccess(res, 200, { user: formatUser(user) });
+    } catch (e) {
+        return sendError(res, 500, "Profile update failed", { details: e.message });
     }
 });
 

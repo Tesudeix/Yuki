@@ -58,7 +58,16 @@ const authGuard = (req, res, next) => {
   }
 };
 
-const CATEGORIES = new Set(["General", "News", "Tools", "Tasks"]);
+const CATEGORIES = new Set(["General", "News", "Tools", "Tasks", "Antaqor", "Community"]);
+
+const isMembershipActive = (user) => {
+  if (!user) return false;
+  if (user.role === "admin") return true;
+  if (user.classroomAccess) return true;
+  if (!user.membershipExpiresAt) return false;
+  const expiry = new Date(user.membershipExpiresAt).getTime();
+  return Number.isFinite(expiry) && expiry > Date.now();
+};
 
 // GET /api/posts?page=1&limit=10&category=News
 router.get("/", async (req, res) => {
@@ -70,7 +79,38 @@ router.get("/", async (req, res) => {
     const skip = (page - 1) * limit;
     const rawCat = typeof req.query.category === "string" ? req.query.category.trim() : "";
     const category = CATEGORIES.has(rawCat) ? rawCat : null;
-    const filter = category ? { category } : {};
+
+    let authPayload = null;
+    let authUser = null;
+    let membershipActive = false;
+    const token = req.headers.authorization?.split(" ")[1];
+    if (token) {
+      try {
+        authPayload = verifyToken(token);
+        if (authPayload?.userId) {
+          authUser = await User.findById(authPayload.userId).lean();
+          membershipActive = isMembershipActive(authUser);
+        }
+      } catch (_) {
+        authPayload = null;
+      }
+    }
+
+    if (category === "Community") {
+      if (!token || !authPayload?.userId) {
+        return res.status(401).json({ success: false, error: "Membership required" });
+      }
+      if (!membershipActive) {
+        return res.status(403).json({ success: false, error: "Membership inactive" });
+      }
+    }
+
+    let filter = {};
+    if (category) {
+      filter = { category };
+    } else if (!membershipActive) {
+      filter = { category: { $ne: "Community" } };
+    }
 
     const posts = await Post.find(filter)
       .sort({ createdAt: -1 })

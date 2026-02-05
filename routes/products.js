@@ -4,6 +4,7 @@ const path = require("path");
 const multer = require("multer");
 const mongoose = require("mongoose");
 const Product = require("../models/Product");
+const ProductOrder = require("../models/ProductOrder");
 const { verifyToken } = require("../auth");
 
 const router = express.Router();
@@ -66,7 +67,18 @@ const adminOnly = (req, res, next) => {
 };
 
 // Allowed categories for validation and filtering
-const ALLOWED_CATEGORIES = new Set(["Prompt", "Design", "Clothes"]);
+const ALLOWED_CATEGORIES = new Set([
+  "Хоол",
+  "Хүнс",
+  "Бөөнний түгээлт",
+  "Урьдчилсан захиалга",
+  "Кофе амттан",
+  "Алкохол",
+  "Гэр ахуй & хүүхэд",
+  "Эргэнэтэд үйлдвэрлэв",
+  "Бэлэг & гоо сайхан",
+  "Гадаад захиалга",
+]);
 
 // GET /api/products
 router.get("/", async (req, res) => {
@@ -85,22 +97,94 @@ router.get("/", async (req, res) => {
   }
 });
 
-// POST /api/products (superadmin)
-router.post("/", authGuard, adminOnly, upload.single("image"), async (req, res) => {
+// GET /api/products/:id
+router.get("/:id", async (req, res) => {
+  const guard = ensureMongo(res);
+  if (guard) return guard;
+  try {
+    const { id } = req.params;
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+      return res.status(400).json({ success: false, error: "Invalid product id" });
+    }
+
+    const item = await Product.findById(id).lean();
+    if (!item) {
+      return res.status(404).json({ success: false, error: "Product not found" });
+    }
+
+    return res.json({ success: true, product: item });
+  } catch (err) {
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// POST /api/products (public create)
+router.post("/", upload.single("image"), async (req, res) => {
   const guard = ensureMongo(res);
   if (guard) return guard;
   try {
     const { name, price, description, category } = req.body || {};
-    if (!name || !price || !category) return res.status(400).json({ success: false, error: "name, price and category are required" });
+    if (!name || !price || !category) {
+      return res
+        .status(400)
+        .json({ success: false, error: "name, price and category are required" });
+    }
     if (!ALLOWED_CATEGORIES.has(String(category))) return res.status(400).json({ success: false, error: "Invalid category" });
+    const parsedPrice = Number(price);
+    if (!Number.isFinite(parsedPrice) || parsedPrice < 0) {
+      return res.status(400).json({ success: false, error: "Invalid price" });
+    }
     const item = await Product.create({
-      name: String(name),
-      price: Number(price),
+      name: String(name).trim(),
+      price: parsedPrice,
       category: String(category),
-      description: description ? String(description) : undefined,
+      description: description ? String(description).trim() : undefined,
       image: req.file ? req.file.filename : undefined,
     });
-    return res.status(201).json({ product: item });
+    return res.status(201).json({ success: true, product: item });
+  } catch (err) {
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// POST /api/products/:id/order (public)
+router.post("/:id/order", async (req, res) => {
+  const guard = ensureMongo(res);
+  if (guard) return guard;
+  try {
+    const { id } = req.params;
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+      return res.status(400).json({ success: false, error: "Invalid product id" });
+    }
+
+    const product = await Product.findById(id).select("_id name");
+    if (!product) {
+      return res.status(404).json({ success: false, error: "Product not found" });
+    }
+
+    const customerName = String(req.body?.customerName || "").trim();
+    const phone = String(req.body?.phone || "").trim();
+    const note = String(req.body?.note || "").trim();
+    const quantityInput = Number(req.body?.quantity || 1);
+    const quantity = Number.isFinite(quantityInput) ? Math.max(1, Math.floor(quantityInput)) : 1;
+
+    if (!customerName || !phone) {
+      return res
+        .status(400)
+        .json({ success: false, error: "customerName and phone are required" });
+    }
+
+    const order = await ProductOrder.create({
+      productId: product._id,
+      productName: product.name,
+      customerName,
+      phone,
+      quantity,
+      note,
+      status: "NEW",
+    });
+
+    return res.status(201).json({ success: true, order });
   } catch (err) {
     return res.status(500).json({ success: false, error: err.message });
   }

@@ -20,7 +20,6 @@ const userSchema = new mongoose.Schema(
             type: String,
             required: true,
             trim: true,
-            index: true,
         },
 
         avatarUrl: {
@@ -80,6 +79,12 @@ const userSchema = new mongoose.Schema(
         },
 
         membershipExpiresAt: Date,
+
+        credits: {
+            type: Number,
+            default: 0,
+            min: 0,
+        },
 
         /* ======================
            AUDIT

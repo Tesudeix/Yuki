@@ -7,7 +7,18 @@ const productSchema = new mongoose.Schema(
     // Product category for marketplace filtering
     category: {
       type: String,
-      enum: ["Prompt", "Design", "Clothes"],
+      enum: [
+        "Хоол",
+        "Хүнс",
+        "Бөөнний түгээлт",
+        "Урьдчилсан захиалга",
+        "Кофе амттан",
+        "Алкохол",
+        "Гэр ахуй & хүүхэд",
+        "Эргэнэтэд үйлдвэрлэв",
+        "Бэлэг & гоо сайхан",
+        "Гадаад захиалга",
+      ],
       required: true,
       trim: true,
     },
