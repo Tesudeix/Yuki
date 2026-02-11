@@ -62,7 +62,10 @@ const superAdmins = new Set([
 ]);
 const adminOnly = (req, res, next) => {
   const phone = req.user?.phone || "";
-  if (superAdmins.has(phone)) return next();
+  const isAdminRoleToken =
+    req.user?.role === "admin" && (req.user?.adminId || req.user?.userId);
+
+  if (superAdmins.has(phone) || isAdminRoleToken) return next();
   return res.status(403).json({ success: false, error: "Forbidden" });
 };
 
@@ -118,8 +121,8 @@ router.get("/:id", async (req, res) => {
   }
 });
 
-// POST /api/products (public create)
-router.post("/", upload.single("image"), async (req, res) => {
+// POST /api/products (admin)
+router.post("/", authGuard, adminOnly, upload.single("image"), async (req, res) => {
   const guard = ensureMongo(res);
   if (guard) return guard;
   try {
