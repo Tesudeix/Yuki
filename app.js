@@ -21,6 +21,7 @@ const adminCargoRoutes = require("./routes/admin-cargo");
 
 const app = express();
 app.set("trust proxy", true);
+const mongoStateLabels = ["disconnected", "connected", "connecting", "disconnecting"];
 
 /* ======================
    MIDDLEWARE
@@ -108,7 +109,7 @@ app.get("/health/mongo", (req, res) => {
         success: true,
         mongo: {
             connected: s === 1,
-            state: ["disconnected", "connected", "connecting", "disconnecting"][s],
+            state: mongoStateLabels[s] || "unknown",
             db: mongoose.connection.name || null,
         },
     });
@@ -128,17 +129,61 @@ app.use((err, req, res, next) => {
    BOOTSTRAP
 ====================== */
 const PORT = Number(process.env.PORT || 4000);
-const MONGO_URI =
-    process.env.MONGO_URI ||
-    process.env.MONGODB_URI ||
-    "mongodb://127.0.0.1:27017/yuki";
+const toPositiveInt = (raw, fallback) => {
+    const parsed = Number(raw);
+    return Number.isFinite(parsed) && parsed > 0 ? Math.floor(parsed) : fallback;
+};
+
+const buildMongoUri = () => {
+    const explicit =
+        (process.env.MONGO_URI || process.env.MONGODB_URI || "").trim();
+    if (explicit) return explicit;
+
+    const host = (process.env.MONGO_HOST || "127.0.0.1").trim();
+    const port = toPositiveInt(process.env.MONGO_PORT, 27017);
+    const db = (process.env.MONGO_DB || (process.env.NODE_ENV === "production" ? "yukiDB" : "yuki")).trim();
+
+    const user = (process.env.MONGO_USER || "").trim();
+    const password = (process.env.MONGO_PASSWORD || "").trim();
+    const authSource = (process.env.MONGO_AUTH_SOURCE || "").trim();
+
+    if (user && password) {
+        const query = new URLSearchParams();
+        query.set("authSource", authSource || "admin");
+        return `mongodb://${encodeURIComponent(user)}:${encodeURIComponent(password)}@${host}:${port}/${db}?${query.toString()}`;
+    }
+
+    // Production-safe fallback matching Docker setup in this project.
+    if (process.env.NODE_ENV === "production") {
+        return `mongodb://admin:tesu123@${host}:${port}/${db}?authSource=admin`;
+    }
+
+    return `mongodb://${host}:${port}/${db}`;
+};
+
+const maskMongoUri = (uri) => uri.replace(/\/\/([^:@/]+):([^@/]+)@/, "//$1:***@");
+const MONGO_URI = buildMongoUri();
+const MONGO_CONNECT_OPTIONS = {
+    autoIndex: process.env.NODE_ENV !== "production",
+    serverSelectionTimeoutMS: toPositiveInt(process.env.MONGO_SERVER_SELECTION_TIMEOUT_MS, 10000),
+};
 
 (async () => {
     try {
+        mongoose.connection.on("connected", () => {
+            console.log(`✅ Mongo connected (${mongoose.connection.name || "unknown-db"})`);
+        });
+        mongoose.connection.on("disconnected", () => {
+            console.error("❌ Mongo disconnected");
+        });
+        mongoose.connection.on("error", (err) => {
+            console.error("❌ Mongo error:", err.message);
+        });
+
         if (MONGO_URI) {
-            await mongoose.connect(MONGO_URI);
+            console.log(`ℹ️ Mongo URI: ${maskMongoUri(MONGO_URI)}`);
+            await mongoose.connect(MONGO_URI, MONGO_CONNECT_OPTIONS);
             await ensureAdminUser();
-            console.log("✅ MongoDB connected");
         } else {
             console.warn("⚠️ MongoDB not configured");
         }
@@ -147,7 +192,12 @@ const MONGO_URI =
             console.log(`🚀 Server running on port ${PORT}`)
         );
     } catch (e) {
-        console.error("Startup failed:", e);
+        console.error("Startup failed:", e.message);
+        console.error("Mongo connection config check:");
+        console.error("  - Ensure MongoDB is running");
+        console.error("  - Ensure username/password are correct");
+        console.error("  - Ensure authSource=admin for Docker root user");
+        console.error(`  - Tried URI: ${maskMongoUri(MONGO_URI)}`);
         process.exit(1);
     }
 })();

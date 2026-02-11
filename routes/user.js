@@ -92,9 +92,16 @@ const sendSuccess = (res, status, payload = {}) =>
 const sendError = (res, status, error, extra = {}) =>
     res.status(status).json({ success: false, error, ...extra });
 
+const mongoStateLabel = (value) =>
+    ["disconnected", "connected", "connecting", "disconnecting"][value] || "unknown";
+
 const ensureMongo = (res) => {
-    if (mongoose.connection.readyState !== 1) {
-        return sendError(res, 503, "MongoDB not connected");
+    const state = mongoose.connection.readyState;
+    if (state !== 1) {
+        return sendError(res, 503, "MongoDB not connected", {
+            state: mongoStateLabel(state),
+            hint: "Check backend MONGO_URI and Mongo authSource=admin configuration.",
+        });
     }
     return null;
 };
@@ -119,8 +126,11 @@ const authGuard = (req, res, next) => {
 
 // STATUS
 router.get("/status", (req, res) => {
+    const state = mongoose.connection.readyState;
     sendSuccess(res, 200, {
-        mongo: mongoose.connection.readyState === 1,
+        mongo: state === 1,
+        state: mongoStateLabel(state),
+        db: mongoose.connection.name || null,
     });
 });
 
