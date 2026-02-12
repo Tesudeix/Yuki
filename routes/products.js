@@ -45,6 +45,25 @@ const ensureMongo = (res) => {
   return null;
 };
 
+const extractImageFilename = (value) => {
+  if (typeof value !== "string") return undefined;
+  const raw = value.trim();
+  if (!raw) return undefined;
+
+  try {
+    if (raw.startsWith("http://") || raw.startsWith("https://")) {
+      const parsed = new URL(raw);
+      const last = parsed.pathname.split("/").filter(Boolean).pop() || "";
+      const decoded = decodeURIComponent(last);
+      return path.basename(decoded);
+    }
+  } catch (_) {
+    return undefined;
+  }
+
+  return path.basename(raw);
+};
+
 // Allowed categories for validation and filtering
 const ALLOWED_CATEGORIES = new Set([
   "Хоол",
@@ -113,12 +132,13 @@ router.post("/", upload.single("image"), async (req, res) => {
     if (!Number.isFinite(parsedPrice) || parsedPrice < 0) {
       return res.status(400).json({ success: false, error: "Invalid price" });
     }
+    const imageFromBody = extractImageFilename(req.body?.image);
     const item = await Product.create({
       name: String(name).trim(),
       price: parsedPrice,
       category: String(category),
       description: description ? String(description).trim() : undefined,
-      image: req.file ? req.file.filename : undefined,
+      image: req.file ? req.file.filename : imageFromBody,
     });
     return res.status(201).json({ success: true, product: item });
   } catch (err) {
