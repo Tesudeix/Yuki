@@ -5,7 +5,6 @@ const multer = require("multer");
 const mongoose = require("mongoose");
 const Product = require("../models/Product");
 const ProductOrder = require("../models/ProductOrder");
-const { verifyToken } = require("../auth");
 
 const router = express.Router();
 
@@ -44,29 +43,6 @@ const ensureMongo = (res) => {
     return res.status(503).json({ success: false, error: "MongoDB connection unavailable", details: mongoStateLabels[state] || "unknown" });
   }
   return null;
-};
-
-const authGuard = (req, res, next) => {
-  try {
-    const token = req.headers.authorization?.split(" ")[1];
-    if (!token) return res.status(401).json({ success: false, error: "No token provided" });
-    req.user = verifyToken(token);
-    return next();
-  } catch (err) {
-    return res.status(401).json({ success: false, error: "Unauthorized", details: err.message });
-  }
-};
-
-const superAdmins = new Set([
-  process.env.ADMIN_PHONE || process.env.SUPERADMIN_PHONE || "+97694641031",
-]);
-const adminOnly = (req, res, next) => {
-  const phone = req.user?.phone || "";
-  const isAdminRoleToken =
-    req.user?.role === "admin" && (req.user?.adminId || req.user?.userId);
-
-  if (superAdmins.has(phone) || isAdminRoleToken) return next();
-  return res.status(403).json({ success: false, error: "Forbidden" });
 };
 
 // Allowed categories for validation and filtering
@@ -121,8 +97,8 @@ router.get("/:id", async (req, res) => {
   }
 });
 
-// POST /api/products (admin)
-router.post("/", authGuard, adminOnly, upload.single("image"), async (req, res) => {
+// POST /api/products (public)
+router.post("/", upload.single("image"), async (req, res) => {
   const guard = ensureMongo(res);
   if (guard) return guard;
   try {
@@ -193,8 +169,8 @@ router.post("/:id/order", async (req, res) => {
   }
 });
 
-// DELETE /api/products/:id (superadmin)
-router.delete("/:id", authGuard, adminOnly, async (req, res) => {
+// DELETE /api/products/:id (public)
+router.delete("/:id", async (req, res) => {
   const guard = ensureMongo(res);
   if (guard) return guard;
   try {
