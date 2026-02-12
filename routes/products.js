@@ -36,6 +36,13 @@ const storage = multer.diskStorage({
 });
 const upload = multer({ storage });
 
+const maybeUploadImage = (req, res, next) => {
+  if (req.is("multipart/form-data")) {
+    return upload.single("image")(req, res, next);
+  }
+  return next();
+};
+
 const mongoStateLabels = { 0: "disconnected", 1: "connected", 2: "connecting", 3: "disconnecting" };
 const ensureMongo = (res) => {
   const state = mongoose.connection.readyState;
@@ -117,7 +124,7 @@ router.get("/:id", async (req, res) => {
 });
 
 // POST /api/products (public)
-router.post("/", upload.single("image"), async (req, res) => {
+router.post("/", maybeUploadImage, async (req, res) => {
   const guard = ensureMongo(res);
   if (guard) return guard;
   try {

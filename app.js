@@ -80,7 +80,7 @@ app.use("/api/admin/cargo", adminCargoRoutes);
 /* ======================
    UPLOAD
 ====================== */
-app.post("/upload", upload.single("file"), (req, res) => {
+const handleUpload = (req, res) => {
     if (!req.file) {
         return res.status(400).json({ success: false, error: "No file uploaded" });
     }
@@ -89,7 +89,10 @@ app.post("/upload", upload.single("file"), (req, res) => {
         success: true,
         downloadUrl: `${base}/files/${encodeURIComponent(req.file.filename)}`,
     });
-});
+};
+
+app.post("/upload", upload.single("file"), handleUpload);
+app.post("/api/upload", upload.single("file"), handleUpload);
 
 /* Background removal endpoint removed intentionally */
 /* ======================
