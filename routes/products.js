@@ -1,44 +1,50 @@
 const express = require("express");
 const fs = require("fs");
 const path = require("path");
-const multer = require("multer");
 const mongoose = require("mongoose");
 const Product = require("../models/Product");
 const ProductOrder = require("../models/ProductOrder");
+const { verifyToken } = require("../auth");
+const {
+  bytesFromMegabytes,
+  createMinFreeSpaceGuard,
+  createDiskUpload,
+  parseAllowedMimeTypes,
+  resolveUploadDir,
+  toPositiveInt,
+} = require("../lib/upload");
 
 const router = express.Router();
 
-const uploadDir = path.join(__dirname, "..", "public", "uploads");
-fs.mkdirSync(uploadDir, { recursive: true });
-
-const sanitizeName = (input) =>
-  String(input || "")
-    .replace(/\s+/g, "-")
-    .replace(/[^a-zA-Z0-9._-]/g, "")
-    .replace(/-+/g, "-")
-    .replace(/^[-_.]+|[-_.]+$/g, "");
-
-const makeUniqueFilename = (originalName) => {
-  const base = path.basename(originalName || "file");
-  const extOrig = path.extname(base);
-  const nameOrig = base.slice(0, base.length - extOrig.length);
-  const nameSafe = sanitizeName(nameOrig) || "file";
-  const extSafe = sanitizeName(extOrig.replace(/^\./, ""));
-  const extPart = extSafe ? `.${extSafe}` : "";
-  const ts = Date.now().toString(36);
-  const rand = Math.random().toString(36).slice(2, 8);
-  return `${nameSafe}-${ts}-${rand}${extPart}`;
-};
-
-const storage = multer.diskStorage({
-  destination: (req, file, cb) => cb(null, uploadDir),
-  filename: (req, file, cb) => cb(null, makeUniqueFilename(file.originalname)),
+const uploadDir = resolveUploadDir(path.join(__dirname, "..", "public", "uploads"));
+const productImageMaxMb = toPositiveInt(process.env.PRODUCT_IMAGE_MAX_MB, 8);
+const uploadMinFreeMb = toPositiveInt(process.env.UPLOAD_MIN_FREE_MB, 1024);
+const upload = createDiskUpload({
+  destinationDir: uploadDir,
+  maxFileSizeBytes: bytesFromMegabytes(productImageMaxMb, 8),
+  allowedMimeTypes: parseAllowedMimeTypes(
+    process.env.PRODUCT_IMAGE_ALLOWED_MIME_TYPES,
+    ["image/jpeg", "image/png", "image/webp", "image/gif", "image/avif"],
+  ),
 });
-const upload = multer({ storage });
+const ensureUploadDiskFree = createMinFreeSpaceGuard({
+  targetPath: uploadDir,
+  minFreeBytes: bytesFromMegabytes(uploadMinFreeMb, 1024),
+});
+
+const deleteUploadedFile = (filename) => {
+  const safe = path.basename(String(filename || "").trim());
+  if (!safe) return;
+  fs.unlink(path.join(uploadDir, safe), (err) => {
+    if (err && err.code !== "ENOENT") {
+      console.error("Failed to delete product upload:", err.message);
+    }
+  });
+};
 
 const maybeUploadImage = (req, res, next) => {
   if (req.is("multipart/form-data")) {
-    return upload.single("image")(req, res, next);
+    return ensureUploadDiskFree(req, res, () => upload.single("image")(req, res, next));
   }
   return next();
 };
@@ -50,6 +56,22 @@ const ensureMongo = (res) => {
     return res.status(503).json({ success: false, error: "MongoDB connection unavailable", details: mongoStateLabels[state] || "unknown" });
   }
   return null;
+};
+
+const authGuard = (req, res, next) => {
+  try {
+    const token = req.headers.authorization?.split(" ")[1];
+    if (!token) return res.status(401).json({ success: false, error: "No token provided" });
+    req.user = verifyToken(token);
+    return next();
+  } catch (err) {
+    return res.status(401).json({ success: false, error: "Unauthorized", details: err.message });
+  }
+};
+
+const adminOnly = (req, res, next) => {
+  if (req.user?.role === "admin") return next();
+  return res.status(403).json({ success: false, error: "Forbidden" });
 };
 
 const extractImageFilename = (value) => {
@@ -124,7 +146,7 @@ router.get("/:id", async (req, res) => {
 });
 
 // POST /api/products (public)
-router.post("/", maybeUploadImage, async (req, res) => {
+router.post("/", authGuard, adminOnly, maybeUploadImage, async (req, res) => {
   const guard = ensureMongo(res);
   if (guard) return guard;
   try {
@@ -197,12 +219,15 @@ router.post("/:id/order", async (req, res) => {
 });
 
 // DELETE /api/products/:id (public)
-router.delete("/:id", async (req, res) => {
+router.delete("/:id", authGuard, adminOnly, async (req, res) => {
   const guard = ensureMongo(res);
   if (guard) return guard;
   try {
     const item = await Product.findByIdAndDelete(req.params.id);
     if (!item) return res.status(404).json({ success: false, error: "Not found" });
+    if (item.image) {
+      deleteUploadedFile(item.image);
+    }
     return res.json({ success: true });
   } catch (err) {
     return res.status(500).json({ success: false, error: err.message });

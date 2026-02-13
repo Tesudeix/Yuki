@@ -1,42 +1,46 @@
 const express = require("express");
 const fs = require("fs");
 const path = require("path");
-const multer = require("multer");
 const mongoose = require("mongoose");
 const Post = require("../models/Post");
 const User = require("../models/User");
 const { verifyToken } = require("../auth");
+const {
+  bytesFromMegabytes,
+  createMinFreeSpaceGuard,
+  createDiskUpload,
+  parseAllowedMimeTypes,
+  resolveUploadDir,
+  toPositiveInt,
+} = require("../lib/upload");
 
 const router = express.Router();
 
-// Ensure uploads dir exists and configure storage similar to app.js
-const uploadDir = path.join(__dirname, "..", "public", "uploads");
-fs.mkdirSync(uploadDir, { recursive: true });
-
-const sanitizeName = (input) =>
-  String(input || "")
-    .replace(/\s+/g, "-")
-    .replace(/[^a-zA-Z0-9._-]/g, "")
-    .replace(/-+/g, "-")
-    .replace(/^[-_.]+|[-_.]+$/g, "");
-
-const makeUniqueFilename = (originalName) => {
-  const base = path.basename(originalName || "file");
-  const extOrig = path.extname(base);
-  const nameOrig = base.slice(0, base.length - extOrig.length);
-  const nameSafe = sanitizeName(nameOrig) || "file";
-  const extSafe = sanitizeName(extOrig.replace(/^\./, ""));
-  const extPart = extSafe ? `.${extSafe}` : "";
-  const ts = Date.now().toString(36);
-  const rand = Math.random().toString(36).slice(2, 8);
-  return `${nameSafe}-${ts}-${rand}${extPart}`;
-};
-
-const storage = multer.diskStorage({
-  destination: (req, file, cb) => cb(null, uploadDir),
-  filename: (req, file, cb) => cb(null, makeUniqueFilename(file.originalname)),
+const uploadDir = resolveUploadDir(path.join(__dirname, "..", "public", "uploads"));
+const postImageMaxMb = toPositiveInt(process.env.POST_IMAGE_MAX_MB, 8);
+const uploadMinFreeMb = toPositiveInt(process.env.UPLOAD_MIN_FREE_MB, 1024);
+const upload = createDiskUpload({
+  destinationDir: uploadDir,
+  maxFileSizeBytes: bytesFromMegabytes(postImageMaxMb, 8),
+  allowedMimeTypes: parseAllowedMimeTypes(
+    process.env.POST_IMAGE_ALLOWED_MIME_TYPES,
+    ["image/jpeg", "image/png", "image/webp", "image/gif", "image/avif"],
+  ),
 });
-const upload = multer({ storage });
+const ensureUploadDiskFree = createMinFreeSpaceGuard({
+  targetPath: uploadDir,
+  minFreeBytes: bytesFromMegabytes(uploadMinFreeMb, 1024),
+});
+
+const deleteUploadedFile = (filename) => {
+  const safe = path.basename(String(filename || "").trim());
+  if (!safe) return;
+  fs.unlink(path.join(uploadDir, safe), (err) => {
+    if (err && err.code !== "ENOENT") {
+      console.error("Failed to delete post upload:", err.message);
+    }
+  });
+};
 
 const mongoStateLabels = { 0: "disconnected", 1: "connected", 2: "connecting", 3: "disconnecting" };
 const ensureMongo = (res) => {
@@ -75,7 +79,8 @@ router.get("/", async (req, res) => {
   if (guard) return guard;
   try {
     const page = Math.max(parseInt(req.query.page || "1", 10), 1);
-    const limit = Math.max(parseInt(req.query.limit || "10", 10), 1);
+    const rawLimit = parseInt(req.query.limit || "10", 10);
+    const limit = Math.min(Math.max(rawLimit, 1), 20);
     const skip = (page - 1) * limit;
     const rawCat = typeof req.query.category === "string" ? req.query.category.trim() : "";
     const category = CATEGORIES.has(rawCat) ? rawCat : null;
@@ -132,7 +137,7 @@ router.get("/", async (req, res) => {
 });
 
 // POST /api/posts  (multipart form: content, image?, category?)
-router.post("/", authGuard, upload.single("image"), async (req, res) => {
+router.post("/", authGuard, ensureUploadDiskFree, upload.single("image"), async (req, res) => {
   const guard = ensureMongo(res);
   if (guard) return guard;
   try {
@@ -277,6 +282,9 @@ router.delete("/:id", authGuard, async (req, res) => {
       return res.status(403).json({ success: false, error: "Forbidden" });
     }
     await Post.deleteOne({ _id: post._id });
+    if (post.image) {
+      deleteUploadedFile(post.image);
+    }
     return res.json({ success: true });
   } catch (err) {
     return res.status(500).json({ success: false, error: err.message });
